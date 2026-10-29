@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Literal
 import structlog
 
 from mtg_mcp_server.utils.color_identity import is_within_identity, parse_color_identity
+from mtg_mcp_server.utils.mana import MANA_ROCK_NAMES, is_mana_rock
 from mtg_mcp_server.workflows import WorkflowResult
 from mtg_mcp_server.workflows.commander import _fmt_synergy
 
@@ -914,7 +915,8 @@ async def color_identity_staples(
         color_identity: Color identity string (e.g. "sultai", "BUG", "mono-red").
         bulk: Initialized ScryfallBulkClient.
         edhrec: Initialized EDHRECClient, or None if disabled.
-        category: Optional card type filter (e.g. "creatures", "instants").
+        category: Optional card type filter (e.g. "creatures", "instants") or
+            "mana rocks". Unknown categories return the valid options.
         limit: Maximum results to return.
         response_format: 'detailed' or 'concise'.
 
@@ -936,20 +938,30 @@ async def color_identity_staples(
             data={"color_identity": color_identity, "error": "Invalid color identity", "cards": []},
         )
 
-    # Map category to type filter
+    # Map category to a type filter. An unknown category used to be ignored,
+    # silently returning every card type; now it gets the valid options.
     type_contains: list[str] | None = None
+    mana_rocks_only = False
     if category is not None:
-        mapped = _CATEGORY_TYPE_MAP.get(category.lower())
-        if mapped is not None:
-            type_contains = [mapped]
+        key = category.lower().strip()
+        if key in MANA_ROCK_NAMES:
+            type_contains = ["artifact"]
+            mana_rocks_only = True
+        elif key in _CATEGORY_TYPE_MAP:
+            type_contains = [_CATEGORY_TYPE_MAP[key]]
+        else:
+            return _unknown_category_result(color_identity, category)
 
-    # Use filter_cards for a single efficient pass
+    # Take every match, then rank. Ranking only the first few matches ranked an
+    # arbitrary slice of the bulk file, so staples like Sol Ring were missed.
     cards = await bulk.filter_cards(
         format="commander",
         color_identity=identity,
         type_contains=type_contains,
-        limit=limit * 5,  # Over-fetch to allow sorting
+        limit=None,
     )
+    if mana_rocks_only:
+        cards = [c for c in cards if is_mana_rock(c)]
 
     # Sort by edhrec_rank (lower = more popular). Cards without rank go last.
     cards.sort(key=lambda c: c.edhrec_rank if c.edhrec_rank is not None else 999999)
@@ -980,6 +992,26 @@ async def color_identity_staples(
         ],
     }
     return WorkflowResult(markdown="\n".join(lines), data=data)
+
+
+def _unknown_category_result(color_identity: str, category: str) -> WorkflowResult:
+    """Explain the valid categories instead of returning unfiltered results."""
+    card_types = sorted(k for k in _CATEGORY_TYPE_MAP if k.endswith("s"))
+    message = (
+        f"Unknown category '{category}'. Use a card type ({', '.join(card_types)}) "
+        "or 'mana rocks'. For roles like ramp, removal or card draw, use "
+        "theme_search with this color identity."
+    )
+    return WorkflowResult(
+        markdown=message,
+        data={
+            "color_identity": color_identity,
+            "category": category,
+            "error": "Unknown category",
+            "valid_categories": [*card_types, "mana rocks"],
+            "cards": [],
+        },
+    )
 
 
 def _format_color_identity_staples(

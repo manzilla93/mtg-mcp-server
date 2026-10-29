@@ -1070,3 +1070,69 @@ class TestColorIdentityStaples:
         result = await color_identity_staples("sultai", bulk=mock_bulk, edhrec=mock_edhrec)
 
         assert isinstance(result.data, dict)
+
+    async def test_ranks_whole_pool_not_first_matches(self, mock_bulk: AsyncMock) -> None:
+        """The most popular card wins even when it comes last in the bulk file."""
+        # 99 obscure cards first, the top staple last -- like Sol Ring deep in the file.
+        pool = [_mock_card(f"Obscure {i}", edhrec_rank=10_000 + i) for i in range(99)]
+        pool.append(_mock_card("Sol Ring", type_line="Artifact", edhrec_rank=1))
+
+        def honour_limit(*, limit: int | None = 100, **_: object) -> list[Card]:
+            """Behave like the real filter_cards: first `limit` matches in file order."""
+            return pool if limit is None else pool[:limit]
+
+        mock_bulk.filter_cards = AsyncMock(side_effect=honour_limit)
+
+        result = await color_identity_staples("esper", bulk=mock_bulk, limit=5)
+
+        assert result.data["cards"][0]["name"] == "Sol Ring"
+        assert mock_bulk.filter_cards.call_args.kwargs["limit"] is None
+
+    async def test_mana_rocks_category(self, mock_bulk: AsyncMock) -> None:
+        """'mana rocks' keeps noncreature artifacts with a mana ability."""
+        sol_ring = _mock_card(
+            "Sol Ring", type_line="Artifact", oracle_text="{T}: Add {C}{C}.", edhrec_rank=1
+        )
+        boots = _mock_card(
+            "Swiftfoot Boots",
+            type_line="Artifact \u2014 Equipment",
+            oracle_text="Equipped creature has hexproof and haste.",
+            edhrec_rank=20,
+        )
+        solemn = _mock_card(
+            "Solemn Simulacrum",
+            type_line="Artifact Creature \u2014 Golem",
+            oracle_text="When this creature enters, you may search your library for a basic land card.",
+            edhrec_rank=43,
+        )
+        mock_bulk.filter_cards = AsyncMock(return_value=[boots, solemn, sol_ring])
+
+        result = await color_identity_staples("esper", bulk=mock_bulk, category="mana rocks")
+
+        names = [c["name"] for c in result.data["cards"]]
+        assert names == ["Sol Ring"]
+        assert mock_bulk.filter_cards.call_args.kwargs["type_contains"] == ["artifact"]
+
+    async def test_mana_artifacts_alias(self, mock_bulk: AsyncMock) -> None:
+        """'mana artifacts' (what a model asked for) means mana rocks too."""
+        sol_ring = _mock_card(
+            "Sol Ring", type_line="Artifact", oracle_text="{T}: Add {C}{C}.", edhrec_rank=1
+        )
+        mock_bulk.filter_cards = AsyncMock(return_value=[sol_ring])
+
+        result = await color_identity_staples("esper", bulk=mock_bulk, category="mana artifacts")
+
+        assert [c["name"] for c in result.data["cards"]] == ["Sol Ring"]
+
+    async def test_unknown_category_lists_valid_options(self, mock_bulk: AsyncMock) -> None:
+        """An unknown category explains the options instead of returning every card type."""
+        mock_bulk.filter_cards = AsyncMock(return_value=[])
+
+        result = await color_identity_staples("esper", bulk=mock_bulk, category="removal")
+
+        assert "Unknown category 'removal'" in result.markdown
+        assert "creatures" in result.markdown
+        assert "theme_search" in result.markdown
+        assert result.data["error"] == "Unknown category"
+        assert "mana rocks" in result.data["valid_categories"]
+        mock_bulk.filter_cards.assert_not_called()

@@ -1,8 +1,22 @@
-"""Mana pip counting and land suggestion utilities."""
+"""Mana pip counting, land suggestion, and mana rock detection utilities."""
 
 from __future__ import annotations
 
 import re
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from mtg_mcp_server.types import Card
+
+# A mana ability: "{T}: Add {C}{C}", "{1}, {T}: Add {W}{B}",
+# "{T}, Sacrifice this artifact: Add three mana of any one color".
+_MANA_ABILITY_RE = re.compile(r":\s*add\b", re.IGNORECASE)
+
+# What people call mana rocks when they ask for them as a category or theme.
+MANA_ROCK_NAMES = frozenset({"mana rocks", "mana rock", "rocks", "mana artifacts", "mana artifact"})
+
+# Reminder text, e.g. a Treasure's "(It's an artifact with ... Add one mana ...)".
+_REMINDER_TEXT_RE = re.compile(r"\([^)]*\)")
 
 # Process hybrid BEFORE standard to avoid double-counting letters.
 # E.g. {G/W} should give G:0.5, W:0.5 — not G:1, W:1 from separate matches.
@@ -59,3 +73,17 @@ def suggest_land_count(avg_cmc: float, format_name: str) -> int:
     if format_name.lower() in _COMMANDER_FORMATS:
         return max(33, min(40, round(33 + avg_cmc * 1.5)))
     return max(20, min(26, round(19 + avg_cmc * 2)))
+
+
+def is_mana_rock(card: Card) -> bool:
+    """True for a noncreature, nonland artifact with a mana ability.
+
+    Covers Sol Ring, Signets, Talismans, Arcane Signet and one-shot rocks like
+    Lotus Petal. Reminder text is ignored, so an artifact that only makes
+    Treasure tokens doesn't count.
+    """
+    types = set(re.findall(r"[a-z]+", card.type_line.lower()))
+    if "artifact" not in types or types & {"creature", "land"}:
+        return False
+    rules_text = _REMINDER_TEXT_RE.sub("", card.oracle_text or "")
+    return bool(_MANA_ABILITY_RE.search(rules_text))

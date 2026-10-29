@@ -1108,6 +1108,11 @@ class TestFilterCards:
         results = await loaded_client.filter_cards(limit=3)
         assert len(results) <= 3
 
+    async def test_filter_limit_none_returns_every_match(self, loaded_client: ScryfallBulkClient):
+        """limit=None returns all matches, so callers can rank the whole pool."""
+        everything = await loaded_client.filter_cards(limit=None)
+        assert len(everything) == len(await loaded_client.all_cards())
+
     async def test_filter_empty_result(self, loaded_client: ScryfallBulkClient):
         """Nonexistent rarity returns empty list."""
         results = await loaded_client.filter_cards(rarity="nonexistent")

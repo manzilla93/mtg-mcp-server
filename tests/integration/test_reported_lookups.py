@@ -34,3 +34,19 @@ class TestRulesLookupByNumber:
         text = result.content[0].text
         assert "702.19 Trample" in text
         assert "State-Based Actions" not in text
+
+
+class TestEsperManaRocks:
+    """Asking for the best Esper mana rocks returned spells, not rocks."""
+
+    async def test_staples_with_mana_artifacts_category(self, mcp_client: Client):
+        """The category a model actually sent, 'mana artifacts', now means mana rocks."""
+        result = await mcp_client.call_tool(
+            "color_identity_staples",
+            {"color_identity": "esper", "category": "mana artifacts"},
+        )
+        text = result.content[0].text
+        assert "Sol Ring" in text
+        assert "Arcane Signet" in text
+        assert "Counterspell" not in text  # an instant
+        assert "Aetherflux Reservoir" not in text  # an artifact with no mana ability

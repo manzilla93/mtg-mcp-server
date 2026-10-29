@@ -291,9 +291,12 @@ class ScryfallBulkClient:
         max_price: float | None = None,
         rarity: str | None = None,
         name_contains: str | None = None,
-        limit: int = 100,
+        limit: int | None = 100,
     ) -> list[Card]:
         """Multi-criteria filter over all cards. Returns up to ``limit`` matches.
+
+        Matches come back in bulk-file order, which says nothing about how good
+        or popular a card is. To rank, pass ``limit=None`` and sort the result.
 
         All filter parameters are optional. Only cards matching **all** specified
         criteria are returned (AND logic). ``text_any`` is the exception: it uses
@@ -311,7 +314,7 @@ class ScryfallBulkClient:
             max_price: Maximum USD price (cards without a USD price are excluded).
             rarity: Exact rarity match (e.g. ``"mythic"``).
             name_contains: Substring match on card name (case-insensitive).
-            limit: Maximum results to return.
+            limit: Maximum results to return, or ``None`` for every match.
 
         Returns:
             Matching cards, up to ``limit``.
@@ -367,7 +370,7 @@ class ScryfallBulkClient:
                 continue
 
             results.append(card)
-            if len(results) >= limit:
+            if limit is not None and len(results) >= limit:
                 break
 
         return results

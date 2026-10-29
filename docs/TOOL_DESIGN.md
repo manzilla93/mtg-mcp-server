@@ -558,10 +558,9 @@ Top-played cards across all commanders in a color identity.
 
 | Field | Detail |
 |-------|--------|
-| Input | `color_identity: str` (e.g. "simic", "UG"), `category: str | None = None` (e.g. "creatures") |
-| Output | Markdown with: staple cards ranked by EDHREC rank (popularity), with prices |
-| Backends | Bulk data (required) + EDHREC (optional, for enrichment) |
-| Partial failure | Degrades gracefully when EDHREC is disabled — falls back to EDHREC rank from bulk data |
+| Input | `color_identity: str` (e.g. "simic", "UG"), `category: str | None = None` (a card type such as "creatures", or "mana rocks") |
+| Output | Markdown with: every Commander-legal card in the identity ranked by EDHREC rank (popularity), with prices. An unknown category returns the valid options. |
+| Backends | Bulk data (required) |
 | Annotations | readOnly=true, idempotent=true, openWorld=true |
 
 ### `sealed_pool_build`

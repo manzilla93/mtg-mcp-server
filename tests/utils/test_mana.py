@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from mtg_mcp_server.utils.mana import count_pips, suggest_land_count
+import pytest
+
+from mtg_mcp_server.types import Card
+from mtg_mcp_server.utils.mana import count_pips, is_mana_rock, suggest_land_count
 
 # ---------------------------------------------------------------------------
 # count_pips — standard pips
@@ -185,3 +188,70 @@ class TestSuggestLandCountCommander:
 
     def test_case_insensitive(self) -> None:
         assert suggest_land_count(2.0, "Commander") == 36
+
+
+# ---------------------------------------------------------------------------
+# is_mana_rock
+# ---------------------------------------------------------------------------
+
+
+def _card(name: str, type_line: str, oracle_text: str) -> Card:
+    """Minimal card with just the fields is_mana_rock reads."""
+    return Card(id=f"test-{name}", name=name, type_line=type_line, oracle_text=oracle_text)
+
+
+class TestIsManaRock:
+    """Noncreature, nonland artifacts with a mana ability."""
+
+    @pytest.mark.parametrize(
+        ("name", "type_line", "oracle_text"),
+        [
+            ("Sol Ring", "Artifact", "{T}: Add {C}{C}."),
+            (
+                "Arcane Signet",
+                "Artifact",
+                "{T}: Add one mana of any color in your commander's color identity.",
+            ),
+            ("Dimir Signet", "Artifact", "{1}, {T}: Add {U}{B}."),
+            (
+                "Lotus Petal",
+                "Artifact",
+                "{T}, Sacrifice this artifact: Add one mana of any color.",
+            ),
+            (
+                "Cultivator's Caravan",
+                "Artifact \u2014 Vehicle",
+                "{T}: Add one mana of any color.\nCrew 3",
+            ),
+        ],
+    )
+    def test_mana_rocks(self, name: str, type_line: str, oracle_text: str) -> None:
+        assert is_mana_rock(_card(name, type_line, oracle_text))
+
+    @pytest.mark.parametrize(
+        ("name", "type_line", "oracle_text"),
+        [
+            # Mana creature, not a rock
+            ("Palladium Myr", "Artifact Creature \u2014 Myr", "{T}: Add {C}{C}."),
+            # Artifact land
+            ("Ancient Den", "Artifact Land", "({T}: Add {W}.)"),
+            # Only the Treasure reminder text mentions mana
+            (
+                "Goldvein Pick",
+                "Artifact \u2014 Equipment",
+                "Equipped creature gets +1/+1.\nWhenever equipped creature deals combat "
+                "damage to a player, create a Treasure token. (It's an artifact with "
+                '"{T}, Sacrifice this token: Add one mana of any color.")\nEquip {1}',
+            ),
+            # Artifact without a mana ability
+            (
+                "Swiftfoot Boots",
+                "Artifact \u2014 Equipment",
+                "Equipped creature has hexproof and haste.",
+            ),
+            # Not an artifact
+            ("Smothering Tithe", "Enchantment", "Whenever an opponent draws a card..."),
+        ],
+    )
+    def test_not_mana_rocks(self, name: str, type_line: str, oracle_text: str) -> None:
+        assert not is_mana_rock(_card(name, type_line, oracle_text))
