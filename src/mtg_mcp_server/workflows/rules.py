@@ -232,7 +232,9 @@ async def rules_lookup(
     """Look up Magic rules by number or keyword search.
 
     If *query* looks like a rule number (digits and dots, optional letter
-    suffix), uses ``rules.lookup_by_number()``. Otherwise searches via
+    suffix), uses ``rules.lookup_by_number()`` and shows the rule with the
+    headings above it and its subrules (``702.19`` is just the title
+    "Trample"; the rules themselves are 702.19a-g). Otherwise searches via
     ``rules.keyword_search()``.
 
     Args:
@@ -248,8 +250,9 @@ async def rules_lookup(
     fmt = _get_rule_formatter(response_format)
 
     found_rules: list[Rule] = []
+    is_number_lookup = _is_rule_number(query.strip())
 
-    if _is_rule_number(query.strip()):
+    if is_number_lookup:
         # Direct rule number lookup
         result = await rules.lookup_by_number(query.strip())
         if result is not None:
@@ -268,6 +271,7 @@ async def rules_lookup(
 
     # Build markdown
     lines: list[str] = []
+    context: list[tuple[str, str]] = []
 
     if not found_rules:
         lines.append(f"# Rules Lookup: {query}")
@@ -275,6 +279,22 @@ async def rules_lookup(
         lines.append(f"No rules found for '{query}'.")
         if section:
             lines.append(f"(filtered to section {section})")
+    elif is_number_lookup:
+        # A single rule: show where it sits in the rules and everything under it
+        rule = found_rules[0]
+        context = list(await rules.rule_context(rule.number))
+        lines.append(f"# Rule {rule.number}")
+        lines.append("")
+        if context:
+            lines.append("*" + " > ".join(f"{num} {title}" for num, title in context) + "*")
+            lines.append("")
+        lines.append(fmt(rule))
+        if rule.subrules:
+            lines.append("")
+            lines.append(f"Subrules ({len(rule.subrules)}):")
+            lines.append("")
+            for subrule in rule.subrules:
+                lines.append(f"- {fmt(subrule)}")
     else:
         lines.append(f"# Rules: {query}")
         lines.append("")
@@ -287,11 +307,14 @@ async def rules_lookup(
             lines.append(f"- {fmt(rule)}")
 
     # Build data
-    data = {
+    data: dict[str, object] = {
         "query": query,
         "section": section,
         "rules": [slim_rule(r) for r in found_rules],
     }
+    if is_number_lookup and found_rules:
+        data["context"] = [{"number": num, "title": title} for num, title in context]
+        data["subrules"] = [slim_rule(r) for r in found_rules[0].subrules]
 
     log.info("rules_lookup.complete", query=query, count=len(found_rules))
     return WorkflowResult(markdown="\n".join(lines), data=data)

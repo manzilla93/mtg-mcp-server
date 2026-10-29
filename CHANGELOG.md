@@ -31,6 +31,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `sideboard_guide` reasoning no longer claims "Color hoser" when the matchup's
   colors are unknown and the card was actually brought in for its sideboard
   category (e.g. direct damage).
+- `rules_lookup` with a rule number returns the headings above the rule and all of
+  its subrules; looking up `702.19` used to return only the title "Trample".
+  Section headings in the rules body are no longer appended to the text of the
+  rule before them.
 
 ## [3.0.0] - 2026-04-03
 

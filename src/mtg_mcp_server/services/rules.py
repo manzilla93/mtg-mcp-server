@@ -29,6 +29,14 @@ _RULE_NUMBER_RE = re.compile(r"^(\d{3}\.\d+[a-z]?)\.?\s")
 # Section headers in the table of contents: "1. Game Concepts"
 _SECTION_HEADER_RE = re.compile(r"^(\d+)\.\s+(.+)$")
 
+# Section headings repeated in the rules body: "7. Additional Rules",
+# "702. Keyword Abilities". One or three digits and a title with no period,
+# so ordinary rule text can't be mistaken for a heading.
+_BODY_SECTION_RE = re.compile(r"^(\d|\d{3})\.\s+([A-Z][^.]*)$")
+
+# Parent rules shown as context are cut to this many characters.
+_CONTEXT_TITLE_MAX = 80
+
 # Delay before retrying a failed refresh (seconds)
 _REFRESH_RETRY_SECONDS = 300
 
@@ -132,6 +140,30 @@ class RulesService:
         await self.ensure_loaded()
         normalized = number.rstrip(".")
         return self._rules.get(normalized)
+
+    async def rule_context(self, number: str) -> list[tuple[str, str]]:
+        """Return the headings above a rule as ``(number, title)`` pairs, outermost first.
+
+        ``"702.19b"`` -> ``[("7", "Additional Rules"), ("702", "Keyword Abilities"),
+        ("702.19", "Trample")]``. Section titles come from the section index;
+        a parent rule contributes its text, cut to its first ~80 characters.
+        Levels that aren't in the parsed rules are skipped.
+        """
+        await self.ensure_loaded()
+        normalized = number.rstrip(".")
+        major = normalized.split(".", 1)[0]  # "702.19b" -> "702"
+        context: list[tuple[str, str]] = []
+
+        # Chapter ("7. Additional Rules") and section ("702. Keyword Abilities")
+        for heading in dict.fromkeys((major[:1], major)):
+            if heading != normalized and heading in self._sections:
+                context.append((heading, self._sections[heading]))
+
+        # Parent rule ("702.19 Trample") for lettered subrules
+        parent = _parent_rule_number(normalized)
+        if parent is not None and "." in parent and parent in self._rules:
+            context.append((parent, _shorten(self._rules[parent].text)))
+        return context
 
     async def keyword_search(self, keyword: str) -> list[Rule]:
         """Search rule text for a keyword, ranked by relevance.
@@ -344,6 +376,18 @@ class RulesService:
                     rest = stripped[rule_match.end() :].strip()
                     current_rule_lines = [rest] if rest else []
                     state = "rules"
+                elif state == "rules" and (heading := _BODY_SECTION_RE.match(stripped)):
+                    # Section heading between rules ("702. Keyword Abilities"):
+                    # record it and end the current rule, so the heading isn't
+                    # appended to the text of the rule before it.
+                    if current_rule_number is not None:
+                        rules[current_rule_number] = Rule(
+                            number=current_rule_number,
+                            text=" ".join(current_rule_lines),
+                        )
+                    sections[heading.group(1)] = heading.group(2)
+                    current_rule_number = None
+                    current_rule_lines = []
                 elif state == "rules" and stripped and current_rule_number is not None:
                     # Continuation line for current rule
                     current_rule_lines.append(stripped)
@@ -403,6 +447,13 @@ def _parent_rule_number(number: str) -> str | None:
             return f"{parts[0]}.{parent_rest}"
         return parts[0]
     return parts[0]
+
+
+def _shorten(text: str, limit: int = _CONTEXT_TITLE_MAX) -> str:
+    """Cut *text* to at most *limit* characters at a word boundary, adding an ellipsis."""
+    if len(text) <= limit:
+        return text
+    return text[:limit].rsplit(" ", 1)[0].rstrip(",;:") + "..."
 
 
 _KEYWORD_RULE_RE = re.compile(r"\brule 702\.")

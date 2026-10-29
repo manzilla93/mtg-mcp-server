@@ -724,7 +724,7 @@ Look up rules by number or keyword search.
 | Field | Detail |
 |-------|--------|
 | Input | `query: str` (rule number like "704.5k" or keyword like "deathtouch"), `section: str | None = None` |
-| Output | Markdown with: matching rules with full text, parent/child rules, cross-references |
+| Output | Markdown with: matching rules with full text; for a rule number, the headings above it (e.g. 7 Additional Rules > 702 Keyword Abilities) and all of its subrules |
 | Backends | RulesService (local) |
 | Annotations | readOnly=true, idempotent=true, openWorld=true |
 

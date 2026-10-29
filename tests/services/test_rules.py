@@ -506,3 +506,64 @@ class TestStaleData:
             await svc.ensure_loaded()
             rule = await svc.lookup_by_number("100.1")
             assert rule is not None
+
+
+# ---------------------------------------------------------------------------
+# Section headings in the rules body
+# ---------------------------------------------------------------------------
+
+
+class TestBodySectionHeadings:
+    """Headings like "702. Keyword Abilities" between rules are not rule text."""
+
+    async def test_heading_not_appended_to_previous_rule(self, service: RulesService) -> None:
+        """The last rule before a heading keeps only its own text."""
+        # In the fixture, "704. State-Based Actions" follows 702.19b and
+        # "7. Additional Rules" / "700. General" follow 100.6.
+        assert "State-Based Actions" not in service._rules["702.19b"].text
+        assert "Additional Rules" not in service._rules["100.6"].text
+        assert "700." not in service._rules["100.6"].text
+        assert "Keyword Abilities" not in service._rules["700.1"].text
+
+    async def test_body_headings_recorded_as_sections(self, service: RulesService) -> None:
+        """Headings that appear only in the body are added to the section index."""
+        assert service._sections["702"] == "Keyword Abilities"
+        assert service._sections["704"] == "State-Based Actions"
+        assert service._sections["7"] == "Additional Rules"
+
+
+# ---------------------------------------------------------------------------
+# rule_context
+# ---------------------------------------------------------------------------
+
+
+class TestRuleContext:
+    """Headings above a rule, outermost first."""
+
+    async def test_subrule_has_chapter_section_and_parent(self, service: RulesService) -> None:
+        """A lettered subrule shows its chapter, section, and parent rule."""
+        context = await service.rule_context("702.19b")
+        assert context == [
+            ("7", "Additional Rules"),
+            ("702", "Keyword Abilities"),
+            ("702.19", "Trample"),
+        ]
+
+    async def test_numbered_rule_has_chapter_and_section(self, service: RulesService) -> None:
+        """A numbered rule has no parent rule, only its chapter and section."""
+        context = await service.rule_context("702.19")
+        assert context == [("7", "Additional Rules"), ("702", "Keyword Abilities")]
+
+    async def test_long_parent_text_is_shortened(self, service: RulesService) -> None:
+        """A parent rule with a long sentence is cut at a word boundary."""
+        context = await service.rule_context("100.2a")
+        parent_number, parent_title = context[-1]
+        assert parent_number == "100.2"
+        assert parent_title.startswith("To play, each player needs")
+        assert parent_title.endswith("...")
+        assert len(parent_title) <= 83
+
+    async def test_unknown_rule_returns_known_levels_only(self, service: RulesService) -> None:
+        """Levels that don't exist in the rules are skipped."""
+        context = await service.rule_context("999.1a")
+        assert context == []

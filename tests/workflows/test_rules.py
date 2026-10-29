@@ -41,6 +41,7 @@ def _make_rules() -> AsyncMock:
     mock.resolve_section = AsyncMock(
         side_effect=lambda s: s if s.replace(".", "").isdigit() else None
     )
+    mock.rule_context = AsyncMock(return_value=[])
     mock.keyword_search = AsyncMock(
         return_value=[
             Rule(number="702.2a", text="Deathtouch is a static ability."),
@@ -218,6 +219,62 @@ class TestRulesLookup:
         # Dotted number
         await rules_lookup("100.1", rules=rules)
         rules.lookup_by_number.assert_awaited()
+
+    @pytest.mark.anyio
+    async def test_rule_number_shows_subrules(self) -> None:
+        """A keyword rule like 702.19 is only a title; its subrules carry the rules."""
+        rules = _make_rules()
+        rules.lookup_by_number.return_value = Rule(
+            number="702.19",
+            text="Trample",
+            subrules=[
+                Rule(number="702.19a", text="Trample is a static ability."),
+                Rule(number="702.19b", text="The controller of an attacking creature..."),
+            ],
+        )
+        rules.rule_context.return_value = [
+            ("7", "Additional Rules"),
+            ("702", "Keyword Abilities"),
+        ]
+
+        result = await rules_lookup("702.19", rules=rules)
+
+        assert "**702.19** Trample" in result.markdown
+        assert "702.19a" in result.markdown
+        assert "702.19b" in result.markdown
+        assert "702 Keyword Abilities" in result.markdown
+        assert [s["number"] for s in result.data["subrules"]] == ["702.19a", "702.19b"]
+        assert result.data["context"][-1] == {"number": "702", "title": "Keyword Abilities"}
+        rules.rule_context.assert_awaited_once_with("702.19")
+
+    @pytest.mark.anyio
+    async def test_subrule_shows_parent(self) -> None:
+        """A lettered subrule shows the rule it belongs to."""
+        rules = _make_rules()
+        rules.lookup_by_number.return_value = Rule(
+            number="702.19b", text="The controller of an attacking creature with trample..."
+        )
+        rules.rule_context.return_value = [
+            ("7", "Additional Rules"),
+            ("702", "Keyword Abilities"),
+            ("702.19", "Trample"),
+        ]
+
+        result = await rules_lookup("702.19b", rules=rules)
+
+        assert "702.19 Trample" in result.markdown
+        assert "Subrules" not in result.markdown
+        assert result.data["subrules"] == []
+
+    @pytest.mark.anyio
+    async def test_keyword_search_skips_context(self) -> None:
+        """Keyword searches list matches without per-rule context lookups."""
+        rules = _make_rules()
+
+        result = await rules_lookup("deathtouch", rules=rules)
+
+        rules.rule_context.assert_not_awaited()
+        assert "context" not in result.data
 
 
 # ---------------------------------------------------------------------------
