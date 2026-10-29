@@ -534,7 +534,7 @@ async def theme_search(
     theme: Annotated[
         str,
         Field(
-            description="Theme to search for — mechanical (aristocrats, voltron, tokens), tribal (goblin, merfolk), or abstract (music, death, ocean)"
+            description="Theme to search for — mechanical (aristocrats, voltron, tokens, ramp, removal, draw, mana rocks), tribal (goblin, merfolk), or abstract (music, death, ocean)"
         ),
     ],
     color_identity: Annotated[
@@ -553,8 +553,8 @@ async def theme_search(
 ) -> ToolResult:
     """Find cards matching a theme — mechanical, tribal, or abstract/flavorful.
 
-    Maps themes to oracle text patterns and searches bulk data. Groups results
-    by relevance tier (strong match, moderate match, flavor match).
+    Maps themes to oracle text patterns and searches bulk data. All matches are
+    ranked by EDHREC popularity, so the first results are the most-played cards.
     """
     from mtg_mcp_server.workflows.building import theme_search as impl
 

@@ -40,6 +40,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   were missed. New `mana rocks` category (aliases include `mana artifacts`); an
   unknown category now returns the valid options instead of being ignored.
   `filter_cards` accepts `limit=None` to return every match.
+- `theme_search` ranks all matches by EDHREC popularity instead of returning the
+  first matches in bulk-file order, and supports a `mana rocks` theme.
+  `total_found` counts every match.
 
 ## [3.0.0] - 2026-04-03
 

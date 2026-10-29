@@ -15,6 +15,7 @@ import structlog
 
 from mtg_mcp_server.services.base import ServiceError
 from mtg_mcp_server.utils.color_identity import parse_color_identity
+from mtg_mcp_server.utils.mana import MANA_ROCK_NAMES, is_mana_rock
 from mtg_mcp_server.workflows import WorkflowResult
 
 if TYPE_CHECKING:
@@ -209,6 +210,11 @@ ABSTRACT_THEMES: dict[str, list[str]] = {
 }
 
 
+def _by_popularity(cards: list[Card]) -> list[Card]:
+    """Most-played first (lowest EDHREC rank); cards without a rank go last."""
+    return sorted(cards, key=lambda c: c.edhrec_rank if c.edhrec_rank is not None else float("inf"))
+
+
 def _fmt_card_line(card: Card) -> str:
     """Format a single card as a markdown line."""
     cost = card.mana_cost or ""
@@ -241,6 +247,9 @@ async def theme_search(
 
     Searches bulk data using oracle text patterns for mechanical themes,
     type line for tribal themes, and name/text for abstract themes.
+    "mana rocks" selects noncreature artifacts with a mana ability. Every
+    match is collected and ranked by EDHREC popularity before ``limit``
+    is applied, so the top results are the most-played matching cards.
 
     Args:
         theme: Theme name (e.g. 'aristocrats', 'merfolk', 'music').
@@ -272,7 +281,17 @@ async def theme_search(
 
     cards: list[Card] = []
 
-    if theme_lower in THEME_MAPPINGS:
+    if theme_lower in MANA_ROCK_NAMES:
+        # Mana rocks -- a card check, not a text pattern
+        artifacts = await bulk.filter_cards(
+            type_contains=["artifact"],
+            color_identity=ci_filter,
+            format=format,
+            max_price=max_price,
+            limit=None,
+        )
+        cards = [c for c in artifacts if is_mana_rock(c)]
+    elif theme_lower in THEME_MAPPINGS:
         # Mechanical theme -- use text_any / text_contains from mapping
         mapping = THEME_MAPPINGS[theme_lower]
         raw_any = mapping.get("text_any")
@@ -290,7 +309,7 @@ async def theme_search(
             color_identity=ci_filter,
             format=format,
             max_price=max_price,
-            limit=limit,
+            limit=None,
         )
     elif theme_lower in ABSTRACT_THEMES:
         # Abstract theme -- search name and text for synonyms
@@ -299,7 +318,7 @@ async def theme_search(
             color_identity=ci_filter,
             format=format,
             max_price=max_price,
-            limit=limit,
+            limit=None,
         )
     else:
         # Assume tribal or unknown -- try type line first, then text search
@@ -308,7 +327,7 @@ async def theme_search(
             color_identity=ci_filter,
             format=format,
             max_price=max_price,
-            limit=limit,
+            limit=None,
         )
 
         if not cards:
@@ -319,8 +338,11 @@ async def theme_search(
                 color_identity=ci_filter,
                 format=format,
                 max_price=max_price,
-                limit=limit,
+                limit=None,
             )
+
+    # Rank every match by popularity, then show the top `limit`
+    cards = _by_popularity(cards)
 
     # Build output
     total = len(cards)
@@ -340,7 +362,8 @@ async def theme_search(
             lines.append(f"**Format:** {format}")
         if max_price is not None:
             lines.append(f"**Max price:** ${max_price:.2f}")
-        lines.append(f"**Found:** {total} cards")
+        shown = f" (top {limit} by EDHREC popularity)" if total > limit else ""
+        lines.append(f"**Found:** {total} cards{shown}")
         lines.append("")
 
         if not cards:

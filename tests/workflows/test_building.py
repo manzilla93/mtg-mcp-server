@@ -309,6 +309,69 @@ class TestThemeSearch:
 
         assert "Blood Artist" in result.markdown
 
+    async def test_mana_rocks_theme(self, mock_bulk: AsyncMock) -> None:
+        """'mana rocks' returns noncreature artifacts with a mana ability, most played first."""
+        signet = _mock_card(
+            "Arcane Signet",
+            type_line="Artifact",
+            oracle_text="{T}: Add one mana of any color in your commander's color identity.",
+            edhrec_rank=3,
+        )
+        sol_ring = _mock_card(
+            "Sol Ring", type_line="Artifact", oracle_text="{T}: Add {C}{C}.", edhrec_rank=1
+        )
+        myr = _mock_card(
+            "Palladium Myr",
+            type_line="Artifact Creature — Myr",
+            oracle_text="{T}: Add {C}{C}.",
+            edhrec_rank=900,
+        )
+        boots = _mock_card(
+            "Swiftfoot Boots",
+            type_line="Artifact — Equipment",
+            oracle_text="Equipped creature has hexproof and haste.",
+            edhrec_rank=20,
+        )
+        mock_bulk.filter_cards = AsyncMock(return_value=[signet, myr, boots, sol_ring])
+
+        result = await theme_search("mana rocks", bulk=mock_bulk, color_identity="WUB")
+
+        assert [c["name"] for c in result.data["cards"]] == ["Sol Ring", "Arcane Signet"]
+        call_kwargs = mock_bulk.filter_cards.call_args.kwargs
+        assert call_kwargs["type_contains"] == ["artifact"]
+        assert call_kwargs["limit"] is None
+
+    async def test_results_ranked_by_popularity(self, mock_bulk: AsyncMock) -> None:
+        """Matches come back most-played first, not in bulk-file order."""
+        cards = [
+            _mock_card(
+                "Rarely Played", oracle_text="Whenever a creature dies...", edhrec_rank=9000
+            ),
+            _mock_card("No Rank", oracle_text="Whenever a creature dies...", edhrec_rank=None),
+            _mock_card("Blood Artist", oracle_text="Whenever a creature dies...", edhrec_rank=150),
+        ]
+        mock_bulk.filter_cards = AsyncMock(return_value=cards)
+
+        result = await theme_search("aristocrats", bulk=mock_bulk)
+
+        names = [c["name"] for c in result.data["cards"]]
+        assert names == ["Blood Artist", "Rarely Played", "No Rank"]
+        assert mock_bulk.filter_cards.call_args.kwargs["limit"] is None
+
+    async def test_found_counts_every_match(self, mock_bulk: AsyncMock) -> None:
+        """total_found counts all matches; only the top `limit` are listed."""
+        cards = [
+            _mock_card(f"Card {i}", oracle_text="Whenever a creature dies...", edhrec_rank=i)
+            for i in range(30)
+        ]
+        mock_bulk.filter_cards = AsyncMock(return_value=cards)
+
+        result = await theme_search("aristocrats", bulk=mock_bulk, limit=5)
+
+        assert result.data["total_found"] == 30
+        assert len(result.data["cards"]) == 5
+        assert "top 5 by EDHREC popularity" in result.markdown
+
 
 # ===========================================================================
 # build_around tests

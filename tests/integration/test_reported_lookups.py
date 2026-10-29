@@ -50,3 +50,13 @@ class TestEsperManaRocks:
         assert "Arcane Signet" in text
         assert "Counterspell" not in text  # an instant
         assert "Aetherflux Reservoir" not in text  # an artifact with no mana ability
+
+    async def test_theme_search_mana_rocks(self, mcp_client: Client):
+        """theme_search('mana rocks') found nothing; it now returns the rocks, most played first."""
+        result = await mcp_client.call_tool(
+            "theme_search",
+            {"theme": "mana rocks", "color_identity": "esper", "format": "commander"},
+        )
+        cards = [c["name"] for c in result.structured_content["cards"]]
+        assert cards[:2] == ["Sol Ring", "Arcane Signet"]
+        assert "Aetherflux Reservoir" not in cards

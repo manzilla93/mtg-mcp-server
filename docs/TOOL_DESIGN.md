@@ -496,7 +496,7 @@ Search for cards matching a mechanical, tribal, or abstract theme via oracle tex
 | Field | Detail |
 |-------|--------|
 | Input | `theme: str` (e.g. "sacrifice", "lifegain", "tokens"), `color_identity: str | None = None`, `format: str | None = None`, `max_price: float | None = None`, `limit: int = 20` |
-| Output | Formatted list of matching cards with type, oracle text excerpt, price. Sorted by match quality. |
+| Output | Formatted list of matching cards with type and price. Every match is collected, then ranked by EDHREC popularity. Includes a `mana rocks` theme. |
 | Backends | Bulk data (required) |
 | Annotations | readOnly=true, idempotent=true, openWorld=true |
 
