@@ -388,6 +388,16 @@ class ScryfallBulkClient:
         await self.ensure_loaded()
         return [card for card in self._unique_cards if card.legalities.get(format) == status]
 
+    @property
+    def loaded_at(self) -> float:
+        """Monotonic time of the last load or refresh check (0.0 = never loaded).
+
+        It changes whenever the card list may have been replaced, so a cache
+        derived from :meth:`all_cards` can be keyed on it instead of holding
+        the list, which would keep an old snapshot alive after a refresh.
+        """
+        return self._loaded_at
+
     async def all_cards(self) -> list[Card]:
         """All unique cards in the bulk data set.
 

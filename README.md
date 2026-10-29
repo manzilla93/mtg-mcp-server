@@ -225,7 +225,7 @@ See `.env.example` for all available options including base URLs, rate limits, a
 | `ban_list` | Banned and restricted cards for a format |
 | `card_in_formats` | Card legality across all formats |
 | `random_card` | Random card, optionally filtered by format or type |
-| `similar_cards` | Find cards similar by type, keywords, or mana cost |
+| `similar_cards` | Find cards whose rules text does similar things |
 
 ### Combos (`spellbook_*`)
 

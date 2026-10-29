@@ -6,6 +6,7 @@ including prices, legalities, and EDHREC rank.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 from typing import TYPE_CHECKING, Annotated, Literal
@@ -38,6 +39,7 @@ from mtg_mcp_server.utils.color_identity import is_within_identity, parse_color_
 from mtg_mcp_server.utils.format_rules import get_format_rules
 from mtg_mcp_server.utils.formatters import ResponseFormat, format_card_detail
 from mtg_mcp_server.utils.query_parser import parse_query
+from mtg_mcp_server.utils.similarity import SimilarityIndex
 from mtg_mcp_server.utils.slim import slim_card
 
 # Lightweight format alias map — maps common abbreviations to Scryfall legality
@@ -63,6 +65,11 @@ if TYPE_CHECKING:
 
 # Module-level client set by the lifespan. See scryfall.py for pattern rationale.
 _client: ScryfallBulkClient | None = None
+
+# Similarity index for the current bulk snapshot, built on first use and keyed
+# by the client's load time. It holds no Card objects, so a refresh frees the old
+# snapshot even if no similarity query runs afterwards.
+_similarity_index: tuple[float, SimilarityIndex] | None = None
 
 
 @lifespan
@@ -113,38 +120,25 @@ def _format_card_detail_with_legalities(
     return lines
 
 
-def _score_similarity(source: Card, candidate: Card) -> float:
-    """Score how similar a candidate card is to a source card."""
-    source_keywords = {k.lower() for k in source.keywords}
-    source_type_words = {
-        w.lower() for w in source.type_line.replace("\u2014", " ").split() if len(w) > 2
-    }
-    source_text_words: set[str] = set()
-    if source.oracle_text:
-        source_text_words = {
-            w.lower()
-            for w in source.oracle_text.replace(",", " ").replace(".", " ").split()
-            if len(w) > 4
-        }
+async def _similarity_index_for(client: ScryfallBulkClient, cards: list[Card]) -> SimilarityIndex:
+    """Return the similarity index for *cards*, building it on first use.
 
-    score = 0.0
-    if candidate.keywords:
-        card_keywords = {k.lower() for k in candidate.keywords}
-        score += len(source_keywords & card_keywords) * 2.0
-    card_type_words = {
-        w.lower() for w in candidate.type_line.replace("\u2014", " ").split() if len(w) > 2
-    }
-    score += len(source_type_words & card_type_words) * 1.5
-    if abs(candidate.cmc - source.cmc) <= 1:
-        score += 1.0
-    if candidate.oracle_text and source_text_words:
-        card_text_words = {
-            w.lower()
-            for w in candidate.oracle_text.replace(",", " ").replace(".", " ").split()
-            if len(w) > 4
-        }
-        score += len(source_text_words & card_text_words) * 1.0
-    return score
+    *cards* must come from ``client.all_cards()`` with no await in between,
+    so ``client.loaded_at`` identifies that snapshot: a refresh changes it and
+    the next query rebuilds. Building takes a few seconds for the full pool,
+    so it runs in a thread to keep the server responsive.
+    """
+    global _similarity_index
+    key = client.loaded_at  # read before any await, so it matches *cards*
+    if _similarity_index is None or _similarity_index[0] != key:
+        index = await asyncio.to_thread(SimilarityIndex.build, cards)
+        _similarity_index = (key, index)
+    return _similarity_index[1]
+
+
+def _is_playable(card: Card) -> bool:
+    """False for cards no format allows, such as playtest and Un-set acorn cards."""
+    return not card.legalities or any(status != "not_legal" for status in card.legalities.values())
 
 
 @scryfall_bulk_mcp.tool(annotations=TOOL_ANNOTATIONS, tags=TAGS_LOOKUP)
@@ -790,11 +784,13 @@ async def similar_cards(
         Field(description="Output verbosity: 'detailed' (default) or 'concise'"),
     ] = "detailed",
 ) -> ToolResult:
-    """Find cards similar to a given card.
+    """Find cards that do similar things to a given card.
 
-    Scores similarity based on shared keywords, type words, CMC
-    proximity, and oracle text overlap. Optionally filter by format
-    legality and price.
+    Compares rules text: words and word pairs weighted so distinctive phrasing
+    ("draw a card unless that player pays") counts more than boilerplate
+    ("whenever", "creature"), plus card types. Scores are 0-100% similarity;
+    ties go to the more-played card. Cards not legal in any format (playtest
+    cards) are skipped. Optionally filter by format legality and price.
     """
     client = _get_client()
 
@@ -809,33 +805,24 @@ async def similar_cards(
 
     fmt = normalize_format(format) if format else None
 
-    scored: list[tuple[float, Card]] = []
-    source_name_lower = source.name.lower()
-
-    for card in all_cards:
-        if card.name.lower() == source_name_lower:
-            continue
+    def keep(card: Card) -> bool:
+        """Format, price and playability filters for candidate cards."""
+        if not _is_playable(card):
+            return False
         if fmt and card.legalities.get(fmt) != "legal":
-            continue
+            return False
         if max_price is not None:
-            price_str = card.prices.usd
-            if price_str is None:
-                continue
             try:
-                if float(price_str) > max_price:
-                    continue
+                return card.prices.usd is not None and float(card.prices.usd) <= max_price
             except ValueError:
-                continue
+                return False
+        return True
 
-        score = _score_similarity(source, card)
-        if score > 0:
-            scored.append((score, card))
+    index = await _similarity_index_for(client, all_cards)
+    top = await asyncio.to_thread(index.rank, source, all_cards, limit=limit, keep=keep)
 
-    if not scored:
+    if not top:
         raise ToolError(f"No similar cards found for '{source.name}'.")
-
-    scored.sort(key=lambda x: x[0], reverse=True)
-    top = scored[:limit]
 
     lines = [
         f"## Cards Similar to {source.name}",
@@ -844,18 +831,18 @@ async def similar_cards(
     ]
     for score, card in top:
         if response_format == "concise":
-            lines.append(f"  {card.name} (score: {score:.0f}%)")
+            lines.append(f"  {card.name} (score: {score:.0%})")
         else:
             cost = f" {card.mana_cost}" if card.mana_cost else ""
             price = f" (${card.prices.usd})" if card.prices.usd else ""
-            lines.append(f"  {card.name}{cost} -- {card.type_line}{price} [score: {score:.1f}]")
+            lines.append(f"  {card.name}{cost} -- {card.type_line}{price} [score: {score:.0%}]")
 
     return ToolResult(
         content="\n".join(lines) + ATTRIBUTION_SCRYFALL_BULK,
         structured_content={
             "source_card": source.name,
             "total_results": len(top),
-            "similar": [{"score": score, **slim_card(card)} for score, card in top],
+            "similar": [{"score": round(score * 100, 1), **slim_card(card)} for score, card in top],
         },
     )
 
@@ -1076,7 +1063,7 @@ async def card_formats_resource(name: str) -> str:
 
 @scryfall_bulk_mcp.resource("mtg://card/{name}/similar")
 async def card_similar_resource(name: str) -> str:
-    """Similar cards as JSON (top 10 by similarity score)."""
+    """Similar cards as JSON (top 10 by similarity score, 0-100)."""
     client = _get_client()
     try:
         source = await client.get_card(name)
@@ -1087,20 +1074,10 @@ async def card_similar_resource(name: str) -> str:
     if source is None:
         return json.dumps({"error": f"Card not found: {name}"})
 
-    scored: list[tuple[float, Card]] = []
-    source_name_lower = source.name.lower()
+    index = await _similarity_index_for(client, all_cards)
+    top = await asyncio.to_thread(index.rank, source, all_cards, limit=10, keep=_is_playable)
 
-    for card in all_cards:
-        if card.name.lower() == source_name_lower:
-            continue
-        score = _score_similarity(source, card)
-        if score > 0:
-            scored.append((score, card))
-
-    scored.sort(key=lambda x: x[0], reverse=True)
-    top = scored[:10]
-
-    result = [{"name": c.name, "score": round(s, 1)} for s, c in top]
+    result = [{"name": c.name, "score": round(s * 100, 1)} for s, c in top]
     return json.dumps(result)
 
 

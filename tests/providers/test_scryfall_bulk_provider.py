@@ -1190,6 +1190,77 @@ class TestSimilarCards:
         assert sc["source_card"] == "Lightning Bolt"
         assert isinstance(sc["similar"], list)
 
+    async def test_skips_cards_not_legal_anywhere(self):
+        """A playtest card with identical text isn't suggested; the real match is."""
+        text = (
+            "Whenever an opponent casts a spell, you may draw a card unless that player pays {1}."
+        )
+        pool = [
+            _make_card(name="Rhystic Study", type_line="Enchantment", oracle_text=text),
+            _make_card(
+                name="White Rhystic Study",
+                type_line="Enchantment",
+                oracle_text=text,
+                legalities={"commander": "not_legal", "vintage": "not_legal"},
+            ),
+            _make_card(
+                name="Mystic Remora",
+                type_line="Enchantment",
+                oracle_text=(
+                    "Whenever an opponent casts a noncreature spell, you may draw a card "
+                    "unless that player pays {4}."
+                ),
+            ),
+            _make_card(name="Sol Ring"),
+        ]
+        mock = _make_pool_client(pool)
+        with patch("mtg_mcp_server.providers.scryfall_bulk.ScryfallBulkClient", return_value=mock):
+            async with Client(transport=scryfall_bulk_mcp) as client:
+                result = await client.call_tool("similar_cards", {"card_name": "Rhystic Study"})
+        names = [c["name"] for c in result.structured_content["similar"]]
+        assert names == ["Mystic Remora"]
+
+    async def test_scores_are_percentages(self):
+        """Scores read as 0-100% similarity in text and structured output."""
+        mock = _make_pool_client()
+        with patch("mtg_mcp_server.providers.scryfall_bulk.ScryfallBulkClient", return_value=mock):
+            async with Client(transport=scryfall_bulk_mcp) as client:
+                result = await client.call_tool("similar_cards", {"card_name": "Lightning Bolt"})
+        score_lines = [ln for ln in result.content[0].text.split("\n") if "score:" in ln]
+        assert score_lines
+        assert all(ln.endswith("%]") for ln in score_lines)
+        assert all(0 < c["score"] <= 100 for c in result.structured_content["similar"])
+
+    async def test_index_built_once_per_bulk_snapshot(self):
+        """Repeat queries reuse the similarity index instead of rebuilding it."""
+        from mtg_mcp_server.utils.similarity import SimilarityIndex
+
+        mock = _make_pool_client()
+        with (
+            patch("mtg_mcp_server.providers.scryfall_bulk.ScryfallBulkClient", return_value=mock),
+            patch.object(SimilarityIndex, "build", wraps=SimilarityIndex.build) as build,
+        ):
+            async with Client(transport=scryfall_bulk_mcp) as client:
+                await client.call_tool("similar_cards", {"card_name": "Lightning Bolt"})
+                await client.call_tool("similar_cards", {"card_name": "Counterspell"})
+        assert build.call_count == 1
+
+    async def test_index_rebuilt_after_bulk_refresh(self):
+        """A refresh (new loaded_at) makes the next query rebuild the index."""
+        from mtg_mcp_server.utils.similarity import SimilarityIndex
+
+        mock = _make_pool_client()
+        mock.loaded_at = 1001.0
+        with (
+            patch("mtg_mcp_server.providers.scryfall_bulk.ScryfallBulkClient", return_value=mock),
+            patch.object(SimilarityIndex, "build", wraps=SimilarityIndex.build) as build,
+        ):
+            async with Client(transport=scryfall_bulk_mcp) as client:
+                await client.call_tool("similar_cards", {"card_name": "Lightning Bolt"})
+                mock.loaded_at = 1002.0  # the bulk data refreshed
+                await client.call_tool("similar_cards", {"card_name": "Lightning Bolt"})
+        assert build.call_count == 2
+
 
 # ---------------------------------------------------------------------------
 # random_card tests

@@ -376,13 +376,14 @@ Get a random card, optionally filtered by format or type.
 | Annotations | readOnly=true, idempotent=true, openWorld=true |
 
 ### `bulk_similar_cards`
-Find cards similar to a given card by type, keywords, or mana cost.
+Find cards whose rules text does similar things to a given card.
 
 | Field | Detail |
 |-------|--------|
-| Input | `card_name: str`, `limit: int = 10` |
-| Output | List of similar cards with shared attributes highlighted |
-| Backend | `ScryfallBulkClient.get_card()` + `filter_cards()` |
+| Input | `card_name: str`, `format: str | None = None`, `max_price: float | None = None`, `limit: int = 10` |
+| Output | Similar cards with 0-100% similarity scores, ties broken by EDHREC rank. Cards legal in no format (playtest cards) are skipped. |
+| Scoring | TF-IDF over normalised oracle-text words and word pairs plus type-line words, cosine similarity (`utils/similarity.py`). The index is built once per bulk snapshot in a worker thread, keyed on `ScryfallBulkClient.loaded_at`; it holds no Card objects, so a refresh frees the old snapshot. |
+| Backend | `ScryfallBulkClient.get_card()` + `all_cards()` |
 | Annotations | readOnly=true, idempotent=true, openWorld=true |
 
 ---
