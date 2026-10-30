@@ -69,6 +69,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `usd_foil` and `eur` to the lowest among the card's paper printings; oversized,
   memorabilia, gold-bordered and digital printings don't count.
   `MTG_MCP_BULK_CHEAPEST_PRICES=false` turns it off. `Card` gains `oracle_id`.
+- The bulk provider and the workflow tools share one card database instead of
+  loading a copy each (about 300 MB apiece once loaded, and briefly two each
+  during a refresh). Both lifespans enter the new `shared_bulk_client()`, which
+  creates the client for the first and closes it after the last.
 - `budget_upgrade` prices EDHREC staples from the card database (cheapest paper
   printing, no rate limit) and asks the Scryfall API only for cards it lacks. It
   used to price each staple by the one printing the API returns, so staples

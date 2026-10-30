@@ -57,7 +57,7 @@ Our server runs a single asyncio event loop — no thread contention on dict acc
 | MTGGoldfish | `get_archetype` | 12h | 100 | Sample decklists are stable once posted |
 | MTGGoldfish | `get_format_staples` | 12h | 50 | Staple rankings shift slowly |
 | MTGGoldfish | `get_deck_price` | 24h | 100 | Prices update daily on MTGGoldfish |
-| Scryfall Bulk | `_printing_prices` (Default Cards) | 6h | 1 | Scryfall updates prices daily; class-level, so the provider's and the workflow server's bulk clients share one download |
+| Scryfall Bulk | `_printing_prices` (Default Cards) | 6h | 1 | Scryfall updates prices daily; class-level, so any bulk clients in the process share one download |
 
 **Note on Moxfield cache keys:** The `get_deck` cache uses a custom key function that normalizes Moxfield URLs to raw deck IDs before hashing. This means `get_deck("https://moxfield.com/decks/abc123")` and `get_deck("abc123")` share the same cache entry. The `get_deck_info` method delegates to `get_deck` and benefits from the same cache.
 
@@ -214,7 +214,7 @@ Scryfall provides Oracle Cards bulk data — a ~30MB JSON file containing every 
 Scryfall bulk data is both a **standalone provider** and **wired into the workflow server**:
 
 - `providers/scryfall_bulk.py` mounts on the orchestrator with `namespace="bulk"` (9 tools).
-- Workflow server creates its own `ScryfallBulkClient` instance for rate-limit-free card resolution.
+- Workflow server uses the same `ScryfallBulkClient` instance for rate-limit-free card resolution: both lifespans enter `shared_bulk_client()`, which hands every caller with the same settings one client (created for the first, closed after the last), so the card data (~300 MB loaded) is held once.
 - `card_resolver.py` checks bulk data first, falls back to Scryfall API for unresolved cards.
 - Provider-level Scryfall tools continue to hit the API directly (with TTL caching).
 

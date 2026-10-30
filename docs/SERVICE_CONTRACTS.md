@@ -407,7 +407,8 @@ Card objects in the bulk data use the **same shape** as Scryfall API responses â
 3. Parses into `dict[str, Card]` keyed by lowercase name for O(1) lookups
 4. Filters out non-playable layouts (art_series, token, double_faced_token, emblem, vanguard, planar, scheme, augment, host) to prevent overwriting real cards
 5. Runs background refresh via `start_background_refresh()` every `MTG_MCP_BULK_DATA_REFRESH_HOURS` (default 12h)
-6. On refresh failure with existing data, serves stale data rather than failing
+6. Is shared: the bulk provider and the workflow server both enter `shared_bulk_client()`, which gives every caller with the same settings one client, so the card data (~300 MB once loaded) is held once per process
+7. On refresh failure with existing data, serves stale data rather than failing
 
 ### Key Methods
 
@@ -435,8 +436,8 @@ Ring, Arcane Signet, Command Tower). With `MTG_MCP_BULK_CHEAPEST_PRICES`
 3. Sets each card's `usd`, `usd_foil` and `eur` (matched by `oracle_id`) to the
    lowest among its paper printings; a price no paper printing has keeps its
    listed value
-4. Caches the result class-wide for 6h, so the provider's and the workflow
-   server's clients share one download
+4. Caches the result class-wide for 6h, so any bulk clients in the process
+   share one download
 5. On failure, logs a warning and leaves the listed prices
 
 ### Feature Flag

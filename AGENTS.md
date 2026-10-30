@@ -170,6 +170,7 @@ Project is trusted; config lives in-repo and any pi session here picks it up aut
 - Don't use `Any` type — use `Unknown` or proper types.
 - Service caching: all service methods use `@async_cached` with class-level `TTLCache`. Tests must clear caches (autouse `_clear_caches` fixture in conftest.py).
 - Scryfall bulk data is behind `MTG_MCP_ENABLE_BULK_DATA` feature flag. It's a file-based service (not BaseClient). Lazy-loads on first access. Returns full `Card` objects (same as Scryfall API).
+- The bulk provider and the workflow server share one `ScryfallBulkClient`: both lifespans enter `shared_bulk_client(...)`. The provider passes `factory=ScryfallBulkClient` so tests that patch `mtg_mcp_server.providers.scryfall_bulk.ScryfallBulkClient` still get their mock.
 - Bulk card prices are the cheapest paper printing's: after each load, a background task streams Scryfall's Default Cards file (`ScryfallBulkClient.apply_cheapest_prices`). Tests run with `MTG_MCP_BULK_CHEAPEST_PRICES=false` (autouse fixture in `tests/conftest.py`); integration tests turn it on with the `cheapest_prices` fixture, listed before `mcp_client`.
 - Always `uv run python3`, never bare `python3` — the venv may not be activated in shell.
 - `Client.call_tool()` returns `CallToolResult` (not subscriptable). Access text via `.content[0].text`. For error tests, use `raise_on_error=False` then check `.is_error`.

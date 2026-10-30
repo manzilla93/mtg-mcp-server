@@ -34,7 +34,11 @@ from mtg_mcp_server.providers import (
 # whether tournament-mode ranking is available.
 from mtg_mcp_server.providers import mtggoldfish as _goldfish_mod
 from mtg_mcp_server.services.mtggoldfish import MTGGoldfishError
-from mtg_mcp_server.services.scryfall_bulk import ScryfallBulkClient, ScryfallBulkError
+from mtg_mcp_server.services.scryfall_bulk import (
+    ScryfallBulkClient,
+    ScryfallBulkError,
+    shared_bulk_client,
+)
 from mtg_mcp_server.utils.color_identity import is_within_identity, parse_color_identity
 from mtg_mcp_server.utils.format_rules import get_format_rules
 from mtg_mcp_server.utils.formatters import ResponseFormat, format_card_detail
@@ -81,12 +85,13 @@ async def scryfall_bulk_lifespan(server: FastMCP):
     """
     global _client
     settings = Settings()
-    client = ScryfallBulkClient(
+    # The workflow server asks for the same client: one card database per process
+    async with shared_bulk_client(
         base_url=settings.scryfall_base_url,
         refresh_hours=settings.bulk_data_refresh_hours,
         cheapest_prices=settings.bulk_cheapest_prices,
-    )
-    async with client:
+        factory=ScryfallBulkClient,
+    ) as client:
         _client = client
         client.start_background_refresh()
         yield {}

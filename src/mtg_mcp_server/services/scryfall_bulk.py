@@ -32,6 +32,7 @@ import json
 import random
 import time
 import zlib
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, NamedTuple, Self
 
 import httpx
@@ -44,10 +45,15 @@ from mtg_mcp_server.services.cache import async_cached
 from mtg_mcp_server.types import Card, CardPrices
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, AsyncIterator
+    from collections.abc import AsyncGenerator, AsyncIterator, Callable, Hashable
     from typing import Any as JSONValue
 
-__all__ = ["ScryfallBulkClient", "ScryfallBulkDownloadError", "ScryfallBulkError"]
+__all__ = [
+    "ScryfallBulkClient",
+    "ScryfallBulkDownloadError",
+    "ScryfallBulkError",
+    "shared_bulk_client",
+]
 
 log = structlog.get_logger(service="ScryfallBulkClient")
 
@@ -119,8 +125,8 @@ class ScryfallBulkClient:
     """
 
     # Cheapest paper prices by Oracle ID, read from Default Cards. Class-level,
-    # so the provider's client and the workflow server's share one download.
-    # Scryfall updates prices daily.
+    # so every client in the process shares one download. Scryfall updates
+    # prices daily.
     _printing_prices_cache: TTLCache = TTLCache(maxsize=1, ttl=6 * 3600)  # 6h
 
     def __init__(
@@ -902,6 +908,72 @@ class ScryfallBulkClient:
                 log.warning("scryfall_bulk.background_refresh_error", exc_info=True)
             except Exception:
                 log.error("scryfall_bulk.background_refresh_unexpected_error", exc_info=True)
+
+
+# ---------------------------------------------------------------------------
+# One card database per process
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class _SharedClient:
+    """A client handed out by :func:`shared_bulk_client`, and how many hold it."""
+
+    client: ScryfallBulkClient
+    users: int = 0
+
+
+# Clients handed out by shared_bulk_client, by configuration. The bulk provider
+# and the workflow server both need the card database, and each loaded copy
+# holds about 300 MB of cards (8.5 KB each, measured on real Oracle Cards data).
+_shared_clients: dict[Hashable, _SharedClient] = {}
+
+
+@contextlib.asynccontextmanager
+async def shared_bulk_client(
+    *,
+    base_url: str,
+    refresh_hours: int,
+    cheapest_prices: bool,
+    factory: Callable[..., ScryfallBulkClient] = ScryfallBulkClient,
+) -> AsyncGenerator[ScryfallBulkClient]:
+    """Use the process's bulk client for these settings, creating it for the first user.
+
+    Every lifespan that needs the card database enters this instead of making
+    its own client, so the provider and the workflow server load the card
+    data once between them. The client is entered for the first user and
+    exited when the last one leaves, so a server running on its own still
+    gets a client of its own.
+
+    Args:
+        base_url: Scryfall API base URL.
+        refresh_hours: Hours before re-downloading data.
+        cheapest_prices: See :class:`ScryfallBulkClient`.
+        factory: Makes the client when no one holds one for these settings
+            (the class itself; tests pass a stand-in).
+    """
+    key = (base_url, refresh_hours, cheapest_prices)
+    shared = _shared_clients.get(key)
+    if shared is None:
+        client = factory(
+            base_url=base_url, refresh_hours=refresh_hours, cheapest_prices=cheapest_prices
+        )
+        # Registered before the await, so a lifespan starting meanwhile shares it
+        shared = _shared_clients[key] = _SharedClient(client)
+        try:
+            await client.__aenter__()
+        except BaseException:
+            del _shared_clients[key]
+            raise
+    shared.users += 1
+    try:
+        yield shared.client
+    finally:
+        shared.users -= 1
+        if shared.users == 0:
+            if _shared_clients.get(key) is shared:
+                del _shared_clients[key]
+            await shared.client.__aexit__(None, None, None)
 
 
 # ---------------------------------------------------------------------------

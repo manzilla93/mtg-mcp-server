@@ -6,6 +6,7 @@ import pytest
 from fastmcp import Client
 
 from mtg_mcp_server.server import mcp
+from mtg_mcp_server.services import scryfall_bulk
 from mtg_mcp_server.services.edhrec import EDHRECClient
 from mtg_mcp_server.services.moxfield import MoxfieldClient
 from mtg_mcp_server.services.mtggoldfish import MTGGoldfishClient
@@ -57,6 +58,8 @@ def _clear_caches():
     MTGGoldfishClient._staples_cache.clear()
     MTGGoldfishClient._price_cache.clear()
     ScryfallBulkClient._printing_prices_cache.clear()
+    # A lifespan that didn't exit (a failed test) must not hand its client to the next test
+    scryfall_bulk._shared_clients.clear()
 
 
 @pytest.fixture

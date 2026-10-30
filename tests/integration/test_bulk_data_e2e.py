@@ -132,3 +132,24 @@ class TestCheapestPrices:
         usd = {c["name"]: c["usd"] for c in result.structured_content["cards"]}
         # Not the oversized $0.05 Sol Ring or the memorabilia $0.10 Bolt
         assert usd == {"Sol Ring": "0.99", "Lightning Bolt": "0.75", "Counterspell": "1.80"}
+
+
+class TestOneCardDatabase:
+    """The bulk provider and the workflow server load the card data once between them."""
+
+    async def test_provider_and_workflows_share_one_client(self, mcp_client: Client):
+        from mtg_mcp_server.providers import scryfall_bulk as provider
+        from mtg_mcp_server.workflows import server as workflows
+
+        assert provider._client is not None
+        assert provider._client is workflows._bulk
+
+    async def test_one_download_serves_both(self, mcp_client: Client):
+        """A bulk tool and a workflow tool: the card data is fetched once."""
+        import respx
+
+        await mcp_client.call_tool("bulk_card_lookup", {"name": "Sol Ring"})
+        await mcp_client.call_tool("price_comparison", {"cards": ["Sol Ring", "Lightning Bolt"]})
+
+        downloads = [call for call in respx.calls if "oracle-cards" in str(call.request.url)]
+        assert len(downloads) == 1
