@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -1228,7 +1229,8 @@ class TestSimilarCards:
                 result = await client.call_tool("similar_cards", {"card_name": "Lightning Bolt"})
         score_lines = [ln for ln in result.content[0].text.split("\n") if "score:" in ln]
         assert score_lines
-        assert all(ln.endswith("%]") for ln in score_lines)
+        # "[score: 87%]" or, for a card with an EDHREC rank, "[score: 87%, EDHREC #50]"
+        assert all(re.search(r"\[score: \d+%(, EDHREC #\d+)?\]$", ln) for ln in score_lines)
         assert all(0 < c["score"] <= 100 for c in result.structured_content["similar"])
 
     async def test_index_built_once_per_bulk_snapshot(self):

@@ -786,11 +786,13 @@ async def similar_cards(
 ) -> ToolResult:
     """Find cards that do similar things to a given card.
 
-    Compares rules text: words and word pairs weighted so distinctive phrasing
-    ("draw a card unless that player pays") counts more than boilerplate
-    ("whenever", "creature"), plus card types. Scores are 0-100% similarity;
-    ties go to the more-played card. Cards not legal in any format (playtest
-    cards) are skipped. Optionally filter by format legality and price.
+    Scores are 0-100% similarity of rules text (distinctive words and word
+    pairs count most), of what the card does (draw, ramp, removal, tax...)
+    and of card types. Results are ordered by that score weighted toward
+    cards Commander players actually run (EDHREC rank, shown per card), so a
+    popular card-draw engine can rank above an obscure card that only shares
+    wording. Cards not legal in any format (playtest cards) are skipped.
+    Optionally filter by format legality and price.
     """
     client = _get_client()
 
@@ -835,7 +837,11 @@ async def similar_cards(
         else:
             cost = f" {card.mana_cost}" if card.mana_cost else ""
             price = f" (${card.prices.usd})" if card.prices.usd else ""
-            lines.append(f"  {card.name}{cost} -- {card.type_line}{price} [score: {score:.0%}]")
+            # The rank explains the order: popular cards can sit above higher scores
+            rank = f", EDHREC #{card.edhrec_rank}" if card.edhrec_rank is not None else ""
+            lines.append(
+                f"  {card.name}{cost} -- {card.type_line}{price} [score: {score:.0%}{rank}]"
+            )
 
     return ToolResult(
         content="\n".join(lines) + ATTRIBUTION_SCRYFALL_BULK,
@@ -1063,7 +1069,7 @@ async def card_formats_resource(name: str) -> str:
 
 @scryfall_bulk_mcp.resource("mtg://card/{name}/similar")
 async def card_similar_resource(name: str) -> str:
-    """Similar cards as JSON (top 10 by similarity score, 0-100)."""
+    """Similar cards as JSON: the top 10, ordered as similar_cards orders them; score 0-100."""
     client = _get_client()
     try:
         source = await client.get_card(name)

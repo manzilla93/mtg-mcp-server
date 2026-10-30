@@ -1,4 +1,4 @@
-"""Tests for rules-text similarity (TF-IDF features + cosine)."""
+"""Tests for card similarity: text, roles and type, ordered with popularity."""
 
 from __future__ import annotations
 
@@ -8,7 +8,12 @@ import weakref
 import pytest
 
 from mtg_mcp_server.types import Card
-from mtg_mcp_server.utils.similarity import SimilarityIndex, card_features
+from mtg_mcp_server.utils.similarity import (
+    SimilarityIndex,
+    card_features,
+    card_roles,
+    type_features,
+)
 
 
 def _card(name: str, type_line: str, oracle_text: str, edhrec_rank: int | None = None) -> Card:
@@ -116,6 +121,25 @@ POOL = [
         "each turn, or casts their second spell each turn, you draw a card.",
         620,
     ),
+    # Share Rhystic Study's trigger or wording, not its purpose (the Pi's top 10
+    # had both before roles and popularity were added)
+    _card(
+        "Taurean Mauler",
+        "Creature — Shapeshifter",
+        "Changeling (This card is every creature type.)\nWhenever an opponent casts a spell, "
+        "you may put a +1/+1 counter on this creature.",
+        959,
+    ),
+    _card(
+        "Reparations",
+        "Enchantment",
+        "Whenever an opponent casts a spell that targets you or a creature you control, "
+        "you may draw a card.",
+        22800,
+    ),
+    # Colorless rocks versus a Signet
+    _card("Worn Powerstone", "Artifact", "This artifact enters tapped.\n{T}: Add {C}{C}.", 573),
+    _card("Dimir Signet", "Artifact", "{1}, {T}: Add {U}{B}.", 157),
     # Unrelated cards, so word weights don't come from lookalikes alone
     _card("Lightning Bolt", "Instant", "Lightning Bolt deals 3 damage to any target.", 50),
     _card("Counterspell", "Instant", "Counter target spell.", 25),
@@ -194,11 +218,15 @@ class TestCardFeatures:
         assert "create treasure" in features
         assert "sacrifice" not in features
 
-    def test_generic_costs_and_mana_are_generalised(self) -> None:
-        """'pays {1}' and 'pays {4}' match; mana symbols become {m}."""
+    def test_generic_costs_are_generalised(self) -> None:
+        """'pays {1}' and 'pays {4}' match."""
         assert "pay {n}" in card_features(RHYSTIC_STUDY)
         assert "pay {n}" in card_features(MYSTIC_REMORA)
-        assert {"{t} add", "add {m}"} <= card_features(_card("Rock", "Artifact", "{T}: Add {C}."))
+
+    def test_colorless_mana_stays_apart_from_colored(self) -> None:
+        """{C} is its own symbol; every colored or hybrid symbol becomes {m}."""
+        assert {"{t} add", "add {c}"} <= card_features(_card("Rock", "Artifact", "{T}: Add {C}."))
+        assert "add {m}" in card_features(_card("Signet", "Artifact", "{1}, {T}: Add {U}{B}."))
 
     def test_filler_words_and_numbers_are_dropped(self) -> None:
         """'draw a card' and 'draw two cards' share the pair 'draw card'."""
@@ -208,11 +236,52 @@ class TestCardFeatures:
         assert "draw card" in one
         assert "draw card" in two
 
-    def test_type_line_words_are_features(self) -> None:
-        """Types and subtypes become prefixed features."""
-        assert {"type:artifact", "type:creature", "type:human", "type:soldier"} <= card_features(
+    def test_type_line_words_are_type_features(self) -> None:
+        """Types and subtypes become prefixed features of their own."""
+        assert {"type:artifact", "type:creature", "type:human", "type:soldier"} <= type_features(
             ESPER_SENTINEL
         )
+        assert not any(f.startswith("type:") for f in card_features(ESPER_SENTINEL))
+
+
+# ---------------------------------------------------------------------------
+# card_roles
+# ---------------------------------------------------------------------------
+
+
+class TestCardRoles:
+    """What a card does for its controller, and whether it keeps doing it."""
+
+    def test_draw_engine_with_a_tax(self) -> None:
+        """Rhystic Study draws you cards, again and again, unless they pay."""
+        assert {"draw", "draw+", "tax", "tax+"} <= card_roles(RHYSTIC_STUDY)
+
+    def test_upkeep_trigger_repeats(self) -> None:
+        arena = next(c for c in POOL if c.name == "Phyrexian Arena")
+        assert {"draw", "draw+"} <= card_roles(arena)
+
+    def test_a_sorcery_draws_once(self) -> None:
+        """A one-shot spell gets the role without the repeatable '+'."""
+        roles = card_roles(_card("Divination", "Sorcery", "Draw two cards."))
+        assert "draw" in roles
+        assert "draw+" not in roles
+
+    def test_opponent_drawing_is_not_your_card_draw(self) -> None:
+        """'That player draws seven cards' (Forced Fruition) helps them, not you."""
+        roles = card_roles(
+            _card(
+                "Forced Fruition",
+                "Enchantment",
+                "Whenever an opponent casts a spell, that player draws seven cards.",
+            )
+        )
+        assert "draw" not in roles
+
+    def test_sacrifice_outlet(self) -> None:
+        roles = card_roles(
+            _card("Viscera Seer", "Creature — Vampire Wizard", "Sacrifice a creature: Scry 1.")
+        )
+        assert {"sacoutlet", "scry"} <= roles
 
 
 # ---------------------------------------------------------------------------
@@ -257,21 +326,22 @@ class TestSimilarityIndex:
         assert "Mystic Remora" not in self._names(results)
 
     def test_identical_text_scores_one(self) -> None:
-        """A functional reprint under another name is a perfect match."""
+        """A functional reprint under another name is a perfect match, even if
+        nobody plays it (it may still rank below a popular close match)."""
         twin = _card("Rhystic Twin", "Enchantment", RHYSTIC_STUDY.oracle_text or "")
         pool = [*POOL, twin]
-        score, card = SimilarityIndex.build(pool).rank(RHYSTIC_STUDY, pool, limit=1)[0]
-        assert card.name == "Rhystic Twin"
-        assert score == pytest.approx(1.0)
+        results = SimilarityIndex.build(pool).rank(RHYSTIC_STUDY, pool, limit=3)
+        score = {card.name: s for s, card in results}
+        assert score["Rhystic Twin"] == pytest.approx(1.0)
 
-    def test_ties_go_to_the_more_played_card(self) -> None:
-        """Equal scores are ordered by EDHREC rank."""
+    def test_equal_scores_go_to_the_more_played_card(self) -> None:
+        """Identical cards are ordered by EDHREC rank."""
         obscure = _card("Obscure Copy", "Enchantment", "Draw a card.", 20000)
         popular = _card("Popular Copy", "Enchantment", "Draw a card.", 5)
         source = _card("Source", "Enchantment", "Draw a card.", 100)
         pool = [obscure, popular, source, *POOL]
-        results = SimilarityIndex.build(pool).rank(source, pool, limit=2)
-        assert self._names(results) == ["Popular Copy", "Obscure Copy"]
+        ranked = self._names(SimilarityIndex.build(pool).rank(source, pool, limit=len(pool)))
+        assert ranked.index("Popular Copy") < ranked.index("Obscure Copy")
 
     def test_source_outside_the_pool(self, index: SimilarityIndex) -> None:
         """A source card that isn't in the pool can still be compared."""
@@ -281,6 +351,38 @@ class TestSimilarityIndex:
             "Whenever an opponent casts a spell, you may draw a card unless that player pays {2}.",
         )
         assert self._names(index.rank(outsider, POOL, limit=2))[0] == "Rhystic Study"
+
+    def test_draw_engines_beat_trigger_lookalikes(self, index: SimilarityIndex) -> None:
+        """Phyrexian Arena does what Rhystic Study is for; Taurean Mauler and Nether
+        Void only share its trigger or its 'unless that player pays'."""
+        ranked = self._names(index.rank(RHYSTIC_STUDY, POOL, limit=len(POOL)))
+        for lookalike in ("Taurean Mauler", "Nether Void", "Soul Barrier"):
+            assert ranked.index("Phyrexian Arena") < ranked.index(lookalike)
+
+    def test_order_includes_popularity_score_does_not(self, index: SimilarityIndex) -> None:
+        """Reparations reads more like Rhystic Study, but players run Phyrexian Arena:
+        Arena ranks first, while the scores still say which text is closer."""
+        results = index.rank(RHYSTIC_STUDY, POOL, limit=len(POOL))
+        ranked = self._names(results)
+        score = {card.name: s for s, card in results}
+        assert ranked.index("Phyrexian Arena") < ranked.index("Reparations")
+        assert score["Reparations"] > score["Phyrexian Arena"]
+
+    def test_colorless_rocks_before_signets(self, index: SimilarityIndex) -> None:
+        """Another {C}{C} rock is closer to Sol Ring than a Signet, which is played more."""
+        sol_ring = next(c for c in POOL if c.name == "Sol Ring")
+        results = index.rank(sol_ring, POOL, limit=len(POOL))
+        ranked = self._names(results)
+        score = {card.name: s for s, card in results}
+        assert score["Worn Powerstone"] > score["Dimir Signet"]
+        assert ranked.index("Worn Powerstone") < ranked.index("Dimir Signet")
+
+    def test_vanilla_creature_matches_on_type(self, index: SimilarityIndex) -> None:
+        """A card with no rules text still finds cards of its type."""
+        bears = next(c for c in POOL if c.name == "Grizzly Bears")
+        results = index.rank(bears, POOL, limit=3)
+        assert results
+        assert all("Creature" in card.type_line for _, card in results)
 
     def test_rank_needs_the_pool_it_was_built_from(self, index: SimilarityIndex) -> None:
         """A pool of a different size is rejected rather than mis-ranked."""

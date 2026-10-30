@@ -51,10 +51,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `theme_search` ranks all matches by EDHREC popularity instead of returning the
   first matches in bulk-file order, and supports a `mana rocks` theme.
   `total_found` counts every match.
-- `similar_cards` (and `mtg://card/{name}/similar`) rank by rules-text similarity:
-  TF-IDF over normalised oracle-text words and word pairs plus the type line,
-  with cosine scores shown as 0-100%. Cards legal in no format, such as playtest
-  cards, are skipped.
+- `similar_cards` (and `mtg://card/{name}/similar`) score cards by what they do:
+  a 0-100% blend of rules-text similarity (TF-IDF over normalised oracle-text
+  words and word pairs; colourless {C} kept apart from coloured mana), roles
+  (draw, ramp, removal, tax and so on, and whether the effect repeats) and type
+  line. Results are ordered by that score weighted toward widely played cards
+  (EDHREC rank, shown per card), so Rhystic Study finds Phyrexian Arena,
+  Smothering Tithe and Trouble in Pairs instead of cards that only share its
+  trigger. Cards legal in no format, such as playtest cards, are skipped.
 
 ## [3.0.0] - 2026-04-03
 
