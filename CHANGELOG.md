@@ -68,6 +68,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `usd_foil` and `eur` to the lowest among the card's paper printings; oversized,
   memorabilia, gold-bordered and digital printings don't count.
   `MTG_MCP_BULK_CHEAPEST_PRICES=false` turns it off. `Card` gains `oracle_id`.
+- `budget_upgrade` prices EDHREC staples from the card database (cheapest paper
+  printing, no rate limit) and asks the Scryfall API only for cards it lacks. It
+  used to price each staple by the one printing the API returns, so staples
+  whose printing had no price yet were left out.
+- `scryfall_card_price` names the printing its prices belong to and adds the
+  cheapest paper printing's USD price when that's lower; for Sol Ring the
+  listed printing was a Star Trek Commander preview with no price at all.
 
 ## [3.0.0] - 2026-04-03
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import date, timedelta
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 import structlog
 from fastmcp import FastMCP
@@ -25,6 +25,9 @@ from mtg_mcp_server.providers import (
 from mtg_mcp_server.services.scryfall import CardNotFoundError, ScryfallClient, ScryfallError
 from mtg_mcp_server.utils.formatters import ResponseFormat, format_card_detail, format_card_line
 from mtg_mcp_server.utils.slim import slim_card
+
+if TYPE_CHECKING:
+    from mtg_mcp_server.types import Card
 
 # Module-level client set by the lifespan. This pattern is required because
 # FastMCP's Depends()/lifespan_context DI doesn't propagate through mount().
@@ -154,11 +157,63 @@ async def card_details(
     )
 
 
+# A card's cheapest paper printing with a USD price, as a Scryfall search. Not
+# counted: digital, oversized, gold-bordered and memorabilia printings (30th
+# Anniversary Edition, World Championship decks), as in the card database.
+_CHEAPEST_PRINTING_QUERY = (
+    "{card} usd>=0 -is:digital -is:oversized -border:gold -st:memorabilia prefer:usd-low"
+)
+
+
+async def _cheapest_printing(client: ScryfallClient, card: Card) -> Card | None:
+    """The card's cheapest paper printing that has a USD price, or None.
+
+    None when no paper printing has a price, or when the search fails: the
+    printing ``card`` came from still answers the question.
+    """
+    # The Oracle ID matches every printing; a quoted exact name is the fallback
+    who = f"oracleid:{card.oracle_id}" if card.oracle_id else f'!"{card.name}"'
+    try:
+        result = await client.search_cards(_CHEAPEST_PRINTING_QUERY.format(card=who))
+    except CardNotFoundError:
+        return None
+    except ScryfallError as exc:
+        log.warning("card_price.cheapest_printing_failed", card=card.name, error=str(exc))
+        return None
+    return result.data[0] if result.data else None
+
+
+def _usd(card: Card) -> float | None:
+    """A printing's USD price as a number, or None if it has none."""
+    try:
+        return float(card.prices.usd) if card.prices.usd is not None else None
+    except ValueError:
+        return None
+
+
+def _costs_less(other: Card, card: Card) -> bool:
+    """True when ``other`` is another printing with a USD price below ``card``'s (or ``card`` has none)."""
+    other_usd, card_usd = _usd(other), _usd(card)
+    if other.id == card.id or other_usd is None:
+        return False
+    return card_usd is None or other_usd < card_usd
+
+
+def _printing(card: Card) -> str:
+    """A printing's set and collector number, e.g. "C21 #263"."""
+    return f"{card.set_code.upper()} #{card.collector_number}"
+
+
 @scryfall_mcp.tool(annotations=TOOL_ANNOTATIONS, tags=TAGS_PRICING)
 async def card_price(
     name: Annotated[str, Field(description="Card name for price lookup (exact match)")],
 ) -> ToolResult:
-    """Get current prices for a Magic card. Prices update once per day."""
+    """Get current prices for a Magic card. Prices update once per day.
+
+    Shows the printing Scryfall lists for the card, and its cheapest paper
+    printing when that one costs less. The listed printing is often a preview
+    with no price yet, or a special printing that costs more than a reprint.
+    """
     client = _get_client()
     try:
         card = await client.get_card_by_name(name)
@@ -167,7 +222,7 @@ async def card_price(
     except ScryfallError as exc:
         raise ToolError(f"Scryfall API error: {exc}") from exc
 
-    lines = [f"**{card.name}** — Prices"]
+    lines = [f"**{card.name}** — Prices ({_printing(card)})"]
     if card.prices.usd:
         lines.append(f"  USD: ${card.prices.usd}")
     if card.prices.usd_foil:
@@ -176,11 +231,29 @@ async def card_price(
         lines.append(f"  EUR: \u20ac{card.prices.eur}")
     if not any([card.prices.usd, card.prices.usd_foil, card.prices.eur]):
         lines.append("  No price data available.")
+
+    # Worth a line only when it beats the listed printing's USD price
+    cheapest = await _cheapest_printing(client, card)
+    cheaper = cheapest if cheapest is not None and _costs_less(cheapest, card) else None
+    if cheaper is not None:
+        lines.append(f"  Cheapest printing: ${cheaper.prices.usd} ({_printing(cheaper)})")
+
     return ToolResult(
         content="\n".join(lines) + ATTRIBUTION_SCRYFALL,
         structured_content={
             "name": card.name,
+            "set": card.set_code,
+            "collector_number": card.collector_number,
             "prices": card.prices.model_dump(mode="json"),
+            "cheapest_printing": (
+                {
+                    "set": cheaper.set_code,
+                    "collector_number": cheaper.collector_number,
+                    "usd": cheaper.prices.usd,
+                }
+                if cheaper is not None
+                else None
+            ),
         },
     )
 

@@ -205,26 +205,116 @@ class TestCardDetailsConcise:
         assert "type_line" in sc
 
 
+def _other_printing(card: dict, set_code: str, number: str, usd: str | None) -> dict:
+    """Another printing of a fixture card, with its own set and USD price."""
+    return {
+        **card,
+        "id": f"{set_code}-{number}",
+        "set": set_code,
+        "collector_number": number,
+        "prices": {**card["prices"], "usd": usd},
+    }
+
+
+def _search_result(*cards: dict) -> dict:
+    """A one-page /cards/search response."""
+    return {"object": "list", "total_cards": len(cards), "has_more": False, "data": list(cards)}
+
+
 class TestCardPrice:
     """Scryfall card_price tool behavior."""
+
+    @staticmethod
+    def _mock(listed: dict, search: httpx.Response) -> respx.Route:
+        """Mock the listed printing and the cheapest-printing search; return the search route."""
+        respx.get(f"{BASE_URL}/cards/named", params={"exact": listed["name"]}).mock(
+            return_value=httpx.Response(200, json=listed)
+        )
+        return respx.get(f"{BASE_URL}/cards/search").mock(return_value=search)
 
     @respx.mock
     async def test_returns_prices(self, client: Client):
         """card_price returns pricing data with USD formatting."""
         fixture = _load_fixture("card_sol_ring.json")
-        respx.get(f"{BASE_URL}/cards/named", params={"exact": "Sol Ring"}).mock(
-            return_value=httpx.Response(200, json=fixture)
-        )
+        # The listed printing is already the cheapest
+        self._mock(fixture, httpx.Response(200, json=_search_result(fixture)))
 
         result = await client.call_tool("card_price", {"name": "Sol Ring"})
         text = result.content[0].text
         assert "Sol Ring" in text
-        assert "$" in text
+        assert "(TMC #59)" in text
+        assert "USD: $1.38" in text
+        assert "Cheapest printing" not in text
 
         sc = result.structured_content
         assert isinstance(sc, dict)
         assert sc["name"] == "Sol Ring"
         assert "prices" in sc
+        assert sc["cheapest_printing"] is None
+
+    @respx.mock
+    async def test_searches_every_printing_by_oracle_id(self, client: Client):
+        fixture = _load_fixture("card_sol_ring.json")
+        search = self._mock(fixture, httpx.Response(200, json=_search_result(fixture)))
+
+        await client.call_tool("card_price", {"name": "Sol Ring"})
+
+        query = search.calls.last.request.url.params["q"]
+        assert query.startswith(f"oracleid:{fixture['oracle_id']} usd>=0")
+        assert "-is:digital" in query
+        assert "prefer:usd-low" in query
+
+    @respx.mock
+    async def test_shows_a_cheaper_printing(self, client: Client):
+        fixture = _load_fixture("card_sol_ring.json")
+        cheaper = _other_printing(fixture, "c21", "263", "0.99")
+        self._mock(fixture, httpx.Response(200, json=_search_result(cheaper)))
+
+        result = await client.call_tool("card_price", {"name": "Sol Ring"})
+
+        assert "USD: $1.38" in result.content[0].text
+        assert "Cheapest printing: $0.99 (C21 #263)" in result.content[0].text
+        assert result.structured_content is not None
+        assert result.structured_content["cheapest_printing"] == {
+            "set": "c21",
+            "collector_number": "263",
+            "usd": "0.99",
+        }
+
+    @respx.mock
+    async def test_listed_printing_without_a_price(self, client: Client):
+        """A preview printing has no price yet; an earlier printing does."""
+        fixture = _load_fixture("card_sol_ring.json")
+        preview = {**_other_printing(fixture, "trc", "499", None), "prices": {}}
+        self._mock(preview, httpx.Response(200, json=_search_result(fixture)))
+
+        result = await client.call_tool("card_price", {"name": "Sol Ring"})
+
+        text = result.content[0].text
+        assert "No price data available." in text
+        assert "Cheapest printing: $1.38 (TMC #59)" in text
+
+    @respx.mock
+    async def test_no_priced_printing_anywhere(self, client: Client):
+        """Scryfall answers 404 when no printing matches the search."""
+        fixture = _load_fixture("card_sol_ring.json")
+        preview = {**_other_printing(fixture, "trc", "499", None), "prices": {}}
+        self._mock(preview, httpx.Response(404, json=_load_fixture("card_not_found.json")))
+
+        result = await client.call_tool("card_price", {"name": "Sol Ring"})
+
+        assert "No price data available." in result.content[0].text
+        assert "Cheapest printing" not in result.content[0].text
+
+    @respx.mock
+    async def test_search_failure_still_returns_the_listed_prices(self, client: Client):
+        fixture = _load_fixture("card_sol_ring.json")
+        self._mock(fixture, httpx.Response(500))
+
+        result = await client.call_tool("card_price", {"name": "Sol Ring"})
+
+        assert not result.is_error
+        assert "USD: $1.38" in result.content[0].text
 
 
 class TestCardRulings:

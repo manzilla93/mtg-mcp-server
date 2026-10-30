@@ -1002,6 +1002,79 @@ class TestCardComparisonResponseFormat:
         assert "**Data Sources:**" not in concise.markdown
 
 
+class TestBudgetUpgradeCardDatabase:
+    """Prices come from the card database first, the Scryfall API for the rest."""
+
+    @staticmethod
+    def _staples(*names: str) -> EDHRECCommanderData:
+        return EDHRECCommanderData(
+            commander_name=COMMANDER_NAME,
+            total_decks=19741,
+            cardlists=[
+                EDHRECCardList(
+                    header="Creatures",
+                    tag="creatures",
+                    cardviews=[
+                        EDHRECCard(name=name, synergy=0.4, inclusion=50, num_decks=9000)
+                        for name in names
+                    ],
+                ),
+            ],
+        )
+
+    @staticmethod
+    def _priced(name: str, usd: str | None) -> Card:
+        return Card(id=f"test-{name}", name=name, type_line="Artifact", prices=CardPrices(usd=usd))
+
+    async def test_database_prices_are_used(self, scryfall: AsyncMock, edhrec: AsyncMock) -> None:
+        """Sol Ring's API printing may have no price; the database has its cheapest."""
+        edhrec.commander_top_cards = AsyncMock(return_value=self._staples("Sol Ring"))
+        bulk = AsyncMock()
+        bulk.get_cards = AsyncMock(return_value={"Sol Ring": self._priced("Sol Ring", "1.23")})
+
+        result = await budget_upgrade(
+            COMMANDER_NAME, budget=2.00, scryfall=scryfall, edhrec=edhrec, bulk=bulk
+        )
+
+        assert "Sol Ring" in result.markdown
+        assert result.data["suggestions"][0]["price"] == 1.23
+        scryfall.get_card_by_name.assert_not_called()
+
+    async def test_cards_the_database_lacks_use_the_api(
+        self, scryfall: AsyncMock, edhrec: AsyncMock
+    ) -> None:
+        edhrec.commander_top_cards = AsyncMock(
+            return_value=self._staples("Sol Ring", "Brand New Card")
+        )
+        bulk = AsyncMock()
+        bulk.get_cards = AsyncMock(
+            return_value={"Sol Ring": self._priced("Sol Ring", "1.23"), "Brand New Card": None}
+        )
+        scryfall.get_card_by_name = AsyncMock(return_value=self._priced("Brand New Card", "0.50"))
+
+        result = await budget_upgrade(
+            COMMANDER_NAME, budget=2.00, scryfall=scryfall, edhrec=edhrec, bulk=bulk
+        )
+
+        names = [s["name"] for s in result.data["suggestions"]]
+        assert sorted(names) == ["Brand New Card", "Sol Ring"]
+        scryfall.get_card_by_name.assert_awaited_once_with("Brand New Card")
+
+    async def test_unfound_cards_are_counted(self, scryfall: AsyncMock, edhrec: AsyncMock) -> None:
+        edhrec.commander_top_cards = AsyncMock(return_value=self._staples("Missing Card"))
+        bulk = AsyncMock()
+        bulk.get_cards = AsyncMock(return_value={"Missing Card": None})
+        scryfall.get_card_by_name = AsyncMock(
+            side_effect=CardNotFoundError("Card not found: 'Missing Card'", status_code=404)
+        )
+
+        result = await budget_upgrade(
+            COMMANDER_NAME, budget=2.00, scryfall=scryfall, edhrec=edhrec, bulk=bulk
+        )
+
+        assert "1 card(s) could not be found to price" in result.markdown
+
+
 class TestBudgetUpgradeResponseFormat:
     """Concise output is shorter than detailed and omits verbose sections."""
 

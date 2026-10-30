@@ -32,8 +32,8 @@ Get current prices for a card.
 | Field | Detail |
 |-------|--------|
 | Input | `name: str` |
-| Output | USD, USD foil, EUR prices. Note: prices update once per day. |
-| Backend | `ScryfallClient.get_card_by_name()` (price subset) |
+| Output | USD, USD foil, EUR prices of the printing Scryfall lists (set and collector number in the heading), plus the cheapest paper printing's USD price when it's lower or the listed printing has none (often a preview). Structured content adds `set`, `collector_number` and `cheapest_printing`. Note: prices update once per day. |
+| Backend | `ScryfallClient.get_card_by_name()` (price subset) + `ScryfallClient.search_cards()` (`oracleid:... usd>=0 prefer:usd-low`, skipping digital, oversized, gold-bordered and memorabilia printings) |
 | Annotations | readOnly=true, idempotent=true, openWorld=true |
 
 ### `scryfall_card_rulings`
@@ -465,7 +465,7 @@ Suggest budget-friendly upgrades for a commander deck.
 |-------|--------|
 | Input | `commander_name: str`, `budget: float` (max price per card in USD), `num_suggestions: int = 10` |
 | Output | Markdown table ranked by synergy-per-dollar: name, synergy, inclusion %, price, synergy/$ |
-| Backends | Scryfall (required, for prices) + EDHREC (required, for staples) |
+| Backends | EDHREC (required, for staples) + bulk data (prices: each card's cheapest paper printing) + Scryfall API (prices for cards bulk data lacks, or when it's disabled) |
 | Error | Returns message if EDHREC disabled, no staples found, or no cards under budget |
 | Progress | Reports progress (1/2 fetching staples, 2/2 fetching prices) |
 | Annotations | readOnly=true, idempotent=true, openWorld=true |
