@@ -15,6 +15,12 @@ EDHREC rank, and image URIs. Checks the ``/bulk-data/oracle_cards`` metadata
 endpoint before download, supports ETag-based conditional downloads, uses
 ``asyncio.Lock`` to prevent duplicate concurrent downloads, and runs a
 background refresh loop via ``asyncio.create_task()``.
+
+Oracle Cards lists one printing per card, and its prices are that printing's:
+often a preview with no price yet, or a digital printing with none. With
+``cheapest_prices`` on, each load is followed by a background pass over
+Scryfall's Default Cards file (every printing) that gives each card its
+cheapest paper printing's prices.
 """
 
 from __future__ import annotations
@@ -26,16 +32,19 @@ import json
 import random
 import time
 import zlib
-from typing import TYPE_CHECKING, Self
+from typing import TYPE_CHECKING, NamedTuple, Self
 
 import httpx
 import structlog
+from cachetools import TTLCache
 from pydantic import ValidationError
 
 from mtg_mcp_server.services.base import DEFAULT_USER_AGENT, ServiceError
-from mtg_mcp_server.types import Card
+from mtg_mcp_server.services.cache import async_cached
+from mtg_mcp_server.types import Card, CardPrices
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator, AsyncIterator
     from typing import Any as JSONValue
 
 __all__ = ["ScryfallBulkClient", "ScryfallBulkDownloadError", "ScryfallBulkError"]
@@ -55,6 +64,29 @@ _EXCLUDED_LAYOUTS: frozenset[str] = frozenset(
         "token",
     }
 )
+
+# The prices a card can take from its other printings.
+_PRICE_FIELDS = ("usd", "usd_foil", "eur")
+
+# Printings that don't set a card's price: they aren't the playable card
+# (oversized), or aren't legal in sanctioned play (memorabilia such as 30th
+# Anniversary Edition and gold-bordered World Championship decks). Digital
+# printings are skipped too; they have no paper price.
+_NON_PLAYABLE_SET_TYPES = frozenset({"memorabilia"})
+
+# One Default Cards line is one printing, a few kilobytes. This much data with
+# no line break means the file isn't JSON Lines: stop instead of buffering it.
+_MAX_LINE_BYTES = 1_000_000
+
+_GZIP_MAGIC = b"\x1f\x8b"
+
+
+class CheapestPrices(NamedTuple):
+    """The lowest price of each kind across a card's paper printings."""
+
+    usd: str | None
+    usd_foil: str | None
+    eur: str | None
 
 
 class ScryfallBulkError(ServiceError):
@@ -86,20 +118,30 @@ class ScryfallBulkClient:
             card = await client.get_card("Sol Ring")
     """
 
+    # Cheapest paper prices by Oracle ID, read from Default Cards. Class-level,
+    # so the provider's client and the workflow server's share one download.
+    # Scryfall updates prices daily.
+    _printing_prices_cache: TTLCache = TTLCache(maxsize=1, ttl=6 * 3600)  # 6h
+
     def __init__(
         self,
         *,
         base_url: str = "https://api.scryfall.com",
         refresh_hours: int = 12,
+        cheapest_prices: bool = False,
     ) -> None:
         """Initialize the Scryfall bulk client.
 
         Args:
             base_url: Scryfall API base URL (for metadata endpoint).
             refresh_hours: Hours before re-downloading data.
+            cheapest_prices: After each load, give every card its cheapest
+                paper printing's prices (see :meth:`apply_cheapest_prices`).
         """
         self._base_url = base_url
         self._refresh_seconds = refresh_hours * 3600
+        self._cheapest_prices = cheapest_prices
+        self._prices_task: asyncio.Task[None] | None = None
 
         # _cards: lowercase-name -> Card for O(1) exact lookup.
         # _unique_cards: deduplicated list for linear substring search.
@@ -125,12 +167,14 @@ class ScryfallBulkClient:
         return self
 
     async def __aexit__(self, *exc: object) -> None:
-        """Cancel background refresh and release in-memory data."""
-        if self._refresh_task is not None:
-            self._refresh_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._refresh_task
-            self._refresh_task = None
+        """Cancel background work and release in-memory data."""
+        for task in (self._refresh_task, self._prices_task):
+            if task is not None:
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+        self._refresh_task = None
+        self._prices_task = None
 
         self._cards.clear()
         self._unique_cards.clear()
@@ -185,6 +229,9 @@ class ScryfallBulkClient:
                 if result is not None:
                     # Got new data — parse it
                     self._parse(result)
+                    # The new cards carry their listed printing's prices until
+                    # the cheapest printing's arrive.
+                    self._start_price_update()
 
                 # Either we parsed new data or got 304 — update timestamp
                 self._loaded_at = time.monotonic()
@@ -467,9 +514,130 @@ class ScryfallBulkClient:
             return None
         return random.choice(pool)
 
+    async def apply_cheapest_prices(self) -> int:
+        """Give every loaded card its cheapest paper printing's prices.
+
+        Oracle Cards lists one printing per card, often a preview with no
+        price yet or a digital printing with none, so budget filters would
+        drop Sol Ring. This reads every printing's prices from Scryfall's
+        Default Cards file (shared by all clients, refreshed every 6 hours)
+        and sets each of ``usd``, ``usd_foil`` and ``eur`` to the lowest
+        among the card's paper printings. A field no paper printing has
+        keeps its listed value. Runs in the background after each load when
+        the client was created with ``cheapest_prices=True``.
+
+        Returns:
+            How many cards' prices changed.
+
+        Raises:
+            ScryfallBulkDownloadError: If Default Cards can't be downloaded.
+            ScryfallBulkError: If it can't be read.
+        """
+        cheapest = await self._printing_prices()
+        changed = 0
+        for card in self._unique_cards:
+            found = cheapest.get(card.oracle_id) if card.oracle_id is not None else None
+            if found is None:
+                continue
+            prices = CardPrices(
+                usd=found.usd if found.usd is not None else card.prices.usd,
+                usd_foil=found.usd_foil if found.usd_foil is not None else card.prices.usd_foil,
+                eur=found.eur if found.eur is not None else card.prices.eur,
+            )
+            if prices != card.prices:
+                card.prices = prices
+                changed += 1
+        log.info(
+            "scryfall_bulk.cheapest_prices_applied",
+            changed=changed,
+            cards=len(self._unique_cards),
+            priced_cards=len(cheapest),
+        )
+        return changed
+
     # -------------------------------------------------------------------
     # Private helpers
     # -------------------------------------------------------------------
+
+    def _start_price_update(self) -> None:
+        """Apply cheapest-printing prices in the background, when enabled.
+
+        A running update reads ``self._unique_cards`` when it finishes, so it
+        also covers cards loaded after it started.
+        """
+        if not self._cheapest_prices:
+            return
+        if self._prices_task is not None and not self._prices_task.done():
+            return
+        self._prices_task = asyncio.create_task(self._update_prices())
+
+    async def _update_prices(self) -> None:
+        """Background task: apply cheapest prices; on failure keep listed ones.
+
+        Like ``_refresh_loop``, logs any error rather than letting it end the
+        task unseen: cards with listed prices beat no cards.
+        """
+        try:
+            await self.apply_cheapest_prices()
+        except ScryfallBulkError:
+            log.warning("scryfall_bulk.cheapest_prices_failed", exc_info=True)
+        except Exception:
+            log.error("scryfall_bulk.cheapest_prices_unexpected_error", exc_info=True)
+
+    @async_cached(_printing_prices_cache)
+    async def _printing_prices(self) -> dict[str, CheapestPrices]:
+        """Cheapest paper prices by Oracle ID, from Scryfall's Default Cards file."""
+        metadata = await self._fetch_bulk_metadata("default_cards")
+        return await self._read_printing_prices(self._resolve_download_url(metadata))
+
+    async def _read_printing_prices(self, url: str) -> dict[str, CheapestPrices]:
+        """Stream Default Cards and keep each card's lowest price of each kind.
+
+        Reads one printing (line) at a time, so memory stays flat whatever the
+        file's size. Supports gzipped or plain JSON Lines.
+
+        Raises:
+            ScryfallBulkDownloadError: On HTTP errors or network failures.
+            ScryfallBulkError: On a payload that isn't JSON Lines.
+        """
+        log.info("scryfall_bulk.cheapest_prices_loading", url=url)
+        lowest: dict[str, dict[str, float]] = {}  # oracle_id -> field -> lowest price
+        printings = 0
+        headers = {"User-Agent": DEFAULT_USER_AGENT, "Accept": "application/json"}
+        try:
+            async with (
+                httpx.AsyncClient(timeout=120.0, headers=headers) as http,
+                http.stream("GET", url) as response,
+            ):
+                if response.status_code != 200:
+                    raise ScryfallBulkDownloadError(
+                        f"HTTP {response.status_code} downloading printing prices from {url}"
+                    )
+                # aclosing: stop reading the download as soon as a line fails
+                async with contextlib.aclosing(_jsonl_lines(response.aiter_bytes())) as lines:
+                    async for line in lines:
+                        try:
+                            entry = json.loads(line)
+                        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+                            raise ScryfallBulkError(
+                                f"Failed to parse printing prices (line {printings + 1}): {exc}"
+                            ) from exc
+                        printings += 1
+                        _add_printing_prices(lowest, entry)
+        except httpx.RequestError as exc:
+            raise ScryfallBulkDownloadError(
+                f"Network error downloading printing prices: {exc}"
+            ) from exc
+
+        log.info("scryfall_bulk.cheapest_prices_loaded", printings=printings, cards=len(lowest))
+        return {
+            oracle_id: CheapestPrices(
+                usd=_format_price(by_field.get("usd")),
+                usd_foil=_format_price(by_field.get("usd_foil")),
+                eur=_format_price(by_field.get("eur")),
+            )
+            for oracle_id, by_field in lowest.items()
+        }
 
     def _is_stale(self) -> bool:
         """Check if the loaded data has exceeded the refresh interval."""
@@ -478,12 +646,20 @@ class ScryfallBulkClient:
         return (time.monotonic() - self._loaded_at) >= self._refresh_seconds
 
     async def _fetch_metadata(self) -> dict:
-        """Fetch the bulk-data metadata to get the current download URI.
+        """Fetch the Oracle Cards metadata to get the current download URI.
 
         Raises:
             ScryfallBulkDownloadError: On HTTP errors or network failures.
         """
-        url = f"{self._base_url}/bulk-data/oracle_cards"
+        return await self._fetch_bulk_metadata("oracle_cards")
+
+    async def _fetch_bulk_metadata(self, bulk_type: str) -> dict:
+        """Fetch one bulk file's metadata (``oracle_cards``, ``default_cards``, ...).
+
+        Raises:
+            ScryfallBulkDownloadError: On HTTP errors or network failures.
+        """
+        url = f"{self._base_url}/bulk-data/{bulk_type}"
         try:
             async with httpx.AsyncClient(
                 timeout=30.0,
@@ -726,3 +902,124 @@ class ScryfallBulkClient:
                 log.warning("scryfall_bulk.background_refresh_error", exc_info=True)
             except Exception:
                 log.error("scryfall_bulk.background_refresh_unexpected_error", exc_info=True)
+
+
+# ---------------------------------------------------------------------------
+# Default Cards: every printing's prices
+# ---------------------------------------------------------------------------
+
+
+class _Gunzip:
+    """Incremental gunzip for a download that may hold several gzip members."""
+
+    def __init__(self) -> None:
+        self._member = zlib.decompressobj(wbits=zlib.MAX_WBITS | 16)
+        self._mid_member = False  # True until the current member's end arrives
+
+    def feed(self, data: bytes) -> bytes:
+        """Decompress the next chunk of the download.
+
+        Raises:
+            zlib.error: On data that isn't gzip.
+        """
+        out = b""
+        while data:
+            out += self._member.decompress(data)
+            self._mid_member = not self._member.eof
+            data = b""
+            if self._member.eof:
+                # This member is complete; whatever follows starts the next one
+                data = self._member.unused_data
+                self._member = zlib.decompressobj(wbits=zlib.MAX_WBITS | 16)
+        return out
+
+    def finish(self) -> None:
+        """Check the download didn't stop part-way through a member.
+
+        Raises:
+            ScryfallBulkError: If it did (a truncated file).
+        """
+        if self._mid_member:
+            raise ScryfallBulkError("Failed to parse bulk data: truncated gzip")
+
+
+async def _jsonl_lines(chunks: AsyncIterator[bytes]) -> AsyncGenerator[bytes]:
+    """Yield the non-blank lines of a streamed JSON Lines file, gunzipping as needed.
+
+    Whether the file is gzipped is read from its first two bytes (Scryfall
+    serves ``.jsonl.gz`` as plain ``application/gzip``, so httpx doesn't
+    decompress it).
+
+    Raises:
+        ScryfallBulkError: On corrupt or truncated gzip, or a line longer than
+            ``_MAX_LINE_BYTES`` (the file isn't JSON Lines).
+    """
+    gunzip: _Gunzip | None = None
+    head = b""  # the first bytes, until there are enough to spot gzip
+    started = False
+    pending = b""  # an incomplete last line, waiting for the next chunk
+
+    try:
+        async for chunk in chunks:
+            if not started:
+                head += chunk
+                if len(head) < len(_GZIP_MAGIC):
+                    continue
+                started, chunk, head = True, head, b""
+                if chunk.startswith(_GZIP_MAGIC):
+                    gunzip = _Gunzip()
+            pending += gunzip.feed(chunk) if gunzip is not None else chunk
+            *lines, pending = pending.split(b"\n")
+            if len(pending) > _MAX_LINE_BYTES:
+                raise ScryfallBulkError(
+                    f"Bulk file has a line over {_MAX_LINE_BYTES} bytes; expected JSON Lines"
+                )
+            for line in lines:
+                if line.strip():
+                    yield line
+        if gunzip is not None:
+            gunzip.finish()
+    except zlib.error as exc:
+        raise ScryfallBulkError(f"Failed to parse bulk data: corrupt gzip: {exc}") from exc
+    # The last line (no newline after it), or a file too short to have started
+    for line in (pending + head).split(b"\n"):
+        if line.strip():
+            yield line
+
+
+def _is_paper_printing(entry: dict) -> bool:
+    """True for a printing sold as the playable paper card (see ``_NON_PLAYABLE_SET_TYPES``)."""
+    return not (
+        entry.get("digital")
+        or entry.get("oversized")
+        or entry.get("border_color") == "gold"
+        or entry.get("set_type") in _NON_PLAYABLE_SET_TYPES
+        or entry.get("layout") in _EXCLUDED_LAYOUTS
+    )
+
+
+def _add_printing_prices(lowest: dict[str, dict[str, float]], entry: object) -> None:
+    """Fold one printing's prices into ``lowest`` (oracle_id -> field -> lowest price)."""
+    if not isinstance(entry, dict) or not _is_paper_printing(entry):
+        return
+    oracle_id = entry.get("oracle_id")
+    prices = entry.get("prices")
+    if not isinstance(oracle_id, str) or not isinstance(prices, dict):
+        return  # e.g. reversible cards keep their Oracle IDs on the faces
+    for field in _PRICE_FIELDS:
+        raw = prices.get(field)
+        if raw is None:
+            continue
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            continue
+        by_field = lowest.setdefault(oracle_id, {})
+        current = by_field.get(field)
+        if current is None or value < current:
+            by_field[field] = value
+
+
+def _format_price(value: float | None) -> str | None:
+    """Back to Scryfall's price format ("1.23"), or None when there's no price."""
+    return f"{value:.2f}" if value is not None else None

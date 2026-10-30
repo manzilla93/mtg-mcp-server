@@ -59,6 +59,11 @@ class Settings(BaseSettings):
 
     # --- Scryfall Bulk Data ---
     bulk_data_refresh_hours: int = 12
+    # Price each card by its cheapest paper printing. Reads Scryfall's Default
+    # Cards file (every printing, larger than Oracle Cards) after each load.
+    # Off: cards keep the price of the one printing Oracle Cards lists, which is
+    # often a preview with no price yet, or a digital printing.
+    bulk_cheapest_prices: bool = True
 
     # --- Comprehensive Rules ---
     rules_url: str = "https://media.wizards.com/2025/downloads/MagicCompRules%2020250404.txt"

@@ -84,6 +84,7 @@ async def scryfall_bulk_lifespan(server: FastMCP):
     client = ScryfallBulkClient(
         base_url=settings.scryfall_base_url,
         refresh_hours=settings.bulk_data_refresh_hours,
+        cheapest_prices=settings.bulk_cheapest_prices,
     )
     async with client:
         _client = client
@@ -326,7 +327,7 @@ async def format_search(
     ] = None,
     max_price: Annotated[
         float | None,
-        Field(description="Maximum USD price filter"),
+        Field(description="Maximum USD price (a card's cheapest paper printing)"),
     ] = None,
     rarity: Annotated[
         str | None,
@@ -776,7 +777,7 @@ async def similar_cards(
     ] = None,
     max_price: Annotated[
         float | None,
-        Field(description="Maximum USD price filter"),
+        Field(description="Maximum USD price (a card's cheapest paper printing)"),
     ] = None,
     limit: Annotated[int, Field(description="Maximum results to return")] = 10,
     response_format: Annotated[

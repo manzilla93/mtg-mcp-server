@@ -10,9 +10,21 @@ from mtg_mcp_server.services.edhrec import EDHRECClient
 from mtg_mcp_server.services.moxfield import MoxfieldClient
 from mtg_mcp_server.services.mtggoldfish import MTGGoldfishClient
 from mtg_mcp_server.services.scryfall import ScryfallClient
+from mtg_mcp_server.services.scryfall_bulk import ScryfallBulkClient
 from mtg_mcp_server.services.seventeen_lands import SeventeenLandsClient
 from mtg_mcp_server.services.spellbook import SpellbookClient
 from mtg_mcp_server.services.spicerack import SpicerackClient
+
+
+@pytest.fixture(autouse=True)
+def _no_cheapest_prices(monkeypatch: pytest.MonkeyPatch):
+    """Keep servers started in tests from reading every printing's prices.
+
+    With it on, each bulk load starts a background download of Scryfall's
+    Default Cards file, which most tests don't mock. Tests of the feature
+    turn it back on (``MTG_MCP_BULK_CHEAPEST_PRICES=true``) and mock it.
+    """
+    monkeypatch.setenv("MTG_MCP_BULK_CHEAPEST_PRICES", "false")
 
 
 @pytest.fixture(autouse=True)
@@ -44,6 +56,7 @@ def _clear_caches():
     MTGGoldfishClient._archetype_cache.clear()
     MTGGoldfishClient._staples_cache.clear()
     MTGGoldfishClient._price_cache.clear()
+    ScryfallBulkClient._printing_prices_cache.clear()
 
 
 @pytest.fixture

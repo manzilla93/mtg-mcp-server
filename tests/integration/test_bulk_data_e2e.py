@@ -109,3 +109,26 @@ class TestBulkResource:
         data = json.loads(result[0].text)
         assert "error" in data
         assert "not found" in data["error"].lower()
+
+
+class TestCheapestPrices:
+    """With MTG_MCP_BULK_CHEAPEST_PRICES on, cards take their cheapest paper printing's price."""
+
+    async def test_price_comparison_uses_the_cheapest_printing(
+        self, cheapest_prices: None, mcp_client: Client
+    ):
+        """The listed printings cost $1.50 and $2.50; Default Cards has $0.99 and $0.75 ones."""
+        from mtg_mcp_server.workflows import server as workflows
+
+        cards = ["Sol Ring", "Lightning Bolt", "Counterspell"]
+        # The first call loads the card data, which starts the price update
+        await mcp_client.call_tool("price_comparison", {"cards": cards})
+        assert workflows._bulk is not None
+        assert workflows._bulk._prices_task is not None
+        await workflows._bulk._prices_task
+
+        result = await mcp_client.call_tool("price_comparison", {"cards": cards})
+        assert result.structured_content is not None
+        usd = {c["name"]: c["usd"] for c in result.structured_content["cards"]}
+        # Not the oversized $0.05 Sol Ring or the memorabilia $0.10 Bolt
+        assert usd == {"Sol Ring": "0.99", "Lightning Bolt": "0.75", "Counterspell": "1.80"}

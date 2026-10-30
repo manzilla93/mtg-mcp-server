@@ -417,6 +417,27 @@ Card objects in the bulk data use the **same shape** as Scryfall API responses �
 - `search_by_type(type_query, limit)` — Type line search
 - `search_by_text(text_query, limit)` — Oracle text search
 - `filter_cards(**criteria)` — Multi-criteria filtering (format, type, color identity, etc.)
+- `apply_cheapest_prices()` — Give every card its cheapest paper printing's prices (below)
+
+### Prices from every printing (Default Cards)
+
+Oracle Cards' prices belong to its one listed printing, which is often an
+unreleased preview or a digital printing with no price (in October 2026: Sol
+Ring, Arcane Signet, Command Tower). With `MTG_MCP_BULK_CHEAPEST_PRICES`
+(default `true`), each load is followed by a background pass over the
+`default_cards` bulk file (every printing; discovered via
+`/bulk-data/default_cards`, `jsonl_download_uri` preferred, gzipped JSON Lines):
+
+1. Streams one printing per line, so memory stays flat however large the file is
+2. Skips printings that aren't the playable paper card: digital, oversized,
+   gold-bordered, `memorabilia` sets (30th Anniversary Edition, World
+   Championship decks) and the non-playable layouts above
+3. Sets each card's `usd`, `usd_foil` and `eur` (matched by `oracle_id`) to the
+   lowest among its paper printings; a price no paper printing has keeps its
+   listed value
+4. Caches the result class-wide for 6h, so the provider's and the workflow
+   server's clients share one download
+5. On failure, logs a warning and leaves the listed prices
 
 ### Feature Flag
 

@@ -59,6 +59,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (EDHREC rank, shown per card), so Rhystic Study finds Phyrexian Arena,
   Smothering Tithe and Trouble in Pairs instead of cards that only share its
   trigger. Cards legal in no format, such as playtest cards, are skipped.
+- Card-database prices are each card's cheapest paper printing's. Oracle Cards
+  lists one printing per card, often an unreleased preview or a digital printing
+  with no price, so `max_price` and other budget filters dropped Sol Ring, Arcane
+  Signet and Command Tower; special listed printings also overstated prices
+  (Fellwar Stone $10.75 against a $0.77 reprint). After each load a background
+  pass streams Scryfall's Default Cards file (every printing) and sets `usd`,
+  `usd_foil` and `eur` to the lowest among the card's paper printings; oversized,
+  memorabilia, gold-bordered and digital printings don't count.
+  `MTG_MCP_BULK_CHEAPEST_PRICES=false` turns it off. `Card` gains `oracle_id`.
 
 ## [3.0.0] - 2026-04-03
 

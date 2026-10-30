@@ -190,6 +190,7 @@ All settings use `MTG_MCP_` environment variables. Everything works out of the b
 MTG_MCP_ENABLE_EDHREC=false       # EDHREC (scrapes undocumented endpoints)
 MTG_MCP_ENABLE_17LANDS=false      # 17Lands (rate-limits aggressively)
 MTG_MCP_ENABLE_BULK_DATA=false    # Scryfall bulk data (~30MB download on first use)
+MTG_MCP_BULK_CHEAPEST_PRICES=false  # Keep each card's listed printing's price instead of its cheapest
 MTG_MCP_ENABLE_RULES=false        # Comprehensive Rules engine
 
 # Pass env vars through uvx

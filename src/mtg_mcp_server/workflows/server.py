@@ -94,6 +94,7 @@ async def workflow_lifespan(server: FastMCP):
             client = ScryfallBulkClient(
                 base_url=settings.scryfall_base_url,
                 refresh_hours=settings.bulk_data_refresh_hours,
+                cheapest_prices=settings.bulk_cheapest_prices,
             )
             _bulk = await stack.enter_async_context(client)
             _bulk.start_background_refresh()
@@ -544,7 +545,9 @@ async def theme_search(
         str | None,
         Field(description="Format legality filter (e.g. 'standard', 'modern', 'commander')"),
     ] = None,
-    max_price: Annotated[float | None, Field(description="Maximum card price in USD")] = None,
+    max_price: Annotated[
+        float | None, Field(description="Maximum card price in USD (cheapest paper printing)")
+    ] = None,
     limit: Annotated[int, Field(description="Maximum number of results")] = 20,
     response_format: Annotated[
         Literal["detailed", "concise"],
@@ -1494,6 +1497,7 @@ async def price_comparison(
     """Compare prices across multiple cards using Scryfall bulk data.
 
     Returns a markdown table with USD, USD foil, and EUR prices sorted by USD descending.
+    Each price is the lowest across the card's paper printings.
     """
     from mtg_mcp_server.workflows.pricing import price_comparison as impl
 

@@ -295,6 +295,10 @@ Get the estimated paper price for an archetype deck.
 
 ## Scryfall Bulk Data Backend (namespace: `bulk`)
 
+Prices from the card database, here and in every workflow that uses it, are each
+card's cheapest paper printing's (`MTG_MCP_BULK_CHEAPEST_PRICES`, on by default),
+not the price of the one printing Scryfall's Oracle Cards file lists.
+
 ### `bulk_card_lookup`
 Look up a Magic card by exact name using Scryfall bulk data. Rate-limit-free.
 

@@ -54,6 +54,21 @@ def _bulk_download_url() -> str:
     return _load_bulk_metadata()["jsonl_download_uri"]
 
 
+def _load_default_cards_metadata() -> dict:
+    """Load the Default Cards bulk-data metadata fixture."""
+    return json.loads((SCRYFALL_BULK_FIXTURES / "bulk_metadata_default_cards.json").read_text())
+
+
+def _load_default_cards_bytes() -> bytes:
+    """Load the Default Cards JSONL.gz sample: every printing of three sample cards.
+
+    Built from ``oracle_cards_sample.jsonl.gz``, not captured: Sol Ring,
+    Lightning Bolt and Counterspell as listed there, plus cheaper printings
+    (one of which is oversized and one memorabilia, neither of which counts).
+    """
+    return (SCRYFALL_BULK_FIXTURES / "default_cards_sample.jsonl.gz").read_bytes()
+
+
 def _load_oracle_cards_bytes() -> bytes:
     """Load the oracle cards JSONL.gz sample fixture as bytes.
 
@@ -90,6 +105,16 @@ async def bulk_client():
         async with client:
             await client.ensure_loaded()
             yield client
+
+
+@pytest.fixture
+def cheapest_prices(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Turn cheapest-printing prices on for servers started after this fixture.
+
+    List it before ``mcp_client`` in a test's arguments so the setting is in
+    place when the orchestrator's lifespans read it.
+    """
+    monkeypatch.setenv("MTG_MCP_BULK_CHEAPEST_PRICES", "true")
 
 
 @pytest.fixture
@@ -168,6 +193,18 @@ async def mcp_client():
                     "Content-Type": "application/gzip",
                     "ETag": '"integration-test"',
                 },
+            )
+        )
+
+        # Every printing's prices (read only with MTG_MCP_BULK_CHEAPEST_PRICES=true)
+        respx.get(f"{SCRYFALL_BASE}/bulk-data/default_cards").mock(
+            return_value=httpx.Response(200, json=_load_default_cards_metadata())
+        )
+        respx.get(_load_default_cards_metadata()["jsonl_download_uri"]).mock(
+            return_value=httpx.Response(
+                200,
+                content=_load_default_cards_bytes(),
+                headers={"Content-Type": "application/gzip"},
             )
         )
 

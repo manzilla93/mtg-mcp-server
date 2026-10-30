@@ -84,6 +84,8 @@ class Card(BaseModel):
     """
 
     id: str
+    # Same for every printing of the card; reversible cards keep theirs per face.
+    oracle_id: str | None = None
     name: str
     mana_cost: str | None = None
     cmc: float = 0.0

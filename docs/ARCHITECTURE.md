@@ -659,6 +659,7 @@ class Settings(BaseSettings):
     disable_cache: bool = False
 
     bulk_data_refresh_hours: int = 12
+    bulk_cheapest_prices: bool = True  # Prices: cheapest paper printing (Default Cards)
 
     # Comprehensive Rules
     rules_url: str = "https://media.wizards.com/2025/downloads/MagicCompRules%2020250404.txt"
@@ -738,6 +739,7 @@ mise run check    # Runs lint + typecheck + test — all must pass
 | Moxfield provider | Behind feature flag, `ns=moxfield` | Reverse-engineered API — fragile, can break without notice |
 | Spicerack provider | Behind feature flag, `ns=spicerack` | Documented public REST API for tournament results. Lowest-risk new data source. Optional `X-API-Key` for higher rate limits |
 | MTGGoldfish provider | Behind feature flag, `ns=goldfish` | HTML scraping (no API) with selectolax. Browser-like UA required. Follows EDHREC fragile-source pattern: feature flag, TAGS_BETA, aggressive caching, ToolError on failure |
+| Card prices | Cheapest paper printing, from Scryfall's Default Cards file | Oracle Cards lists one printing per card, often an unpriced preview or a digital printing, so budget filters dropped staples. A background pass after each bulk load streams every printing (flat memory) and sets each card's prices to its cheapest paper printing's. Behind `MTG_MCP_BULK_CHEAPEST_PRICES` |
 | HTML parsing dependency | selectolax | 10-50x faster than BeautifulSoup, tiny footprint. Added for MTGGoldfish HTML scraping. Only used in `services/mtggoldfish.py` |
 
 ---

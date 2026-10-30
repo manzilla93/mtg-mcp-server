@@ -57,6 +57,7 @@ Our server runs a single asyncio event loop — no thread contention on dict acc
 | MTGGoldfish | `get_archetype` | 12h | 100 | Sample decklists are stable once posted |
 | MTGGoldfish | `get_format_staples` | 12h | 50 | Staple rankings shift slowly |
 | MTGGoldfish | `get_deck_price` | 24h | 100 | Prices update daily on MTGGoldfish |
+| Scryfall Bulk | `_printing_prices` (Default Cards) | 6h | 1 | Scryfall updates prices daily; class-level, so the provider's and the workflow server's bulk clients share one download |
 
 **Note on Moxfield cache keys:** The `get_deck` cache uses a custom key function that normalizes Moxfield URLs to raw deck IDs before hashing. This means `get_deck("https://moxfield.com/decks/abc123")` and `get_deck("abc123")` share the same cache entry. The `get_deck_info` method delegates to `get_deck` and benefits from the same cache.
 
