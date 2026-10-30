@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Literal
 import structlog
 
 from mtg_mcp_server.utils.color_identity import is_within_identity, parse_color_identity
-from mtg_mcp_server.utils.mana import MANA_ROCK_NAMES, is_mana_rock
+from mtg_mcp_server.utils.mana import is_mana_rock, is_mana_rock_request
 from mtg_mcp_server.workflows import WorkflowResult
 from mtg_mcp_server.workflows.commander import _fmt_synergy
 
@@ -944,7 +944,7 @@ async def color_identity_staples(
     mana_rocks_only = False
     if category is not None:
         key = category.lower().strip()
-        if key in MANA_ROCK_NAMES:
+        if is_mana_rock_request(key):
             type_contains = ["artifact"]
             mana_rocks_only = True
         elif key in _CATEGORY_TYPE_MAP:

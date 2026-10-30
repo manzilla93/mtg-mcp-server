@@ -5,7 +5,12 @@ from __future__ import annotations
 import pytest
 
 from mtg_mcp_server.types import Card
-from mtg_mcp_server.utils.mana import count_pips, is_mana_rock, suggest_land_count
+from mtg_mcp_server.utils.mana import (
+    count_pips,
+    is_mana_rock,
+    is_mana_rock_request,
+    suggest_land_count,
+)
 
 # ---------------------------------------------------------------------------
 # count_pips — standard pips
@@ -223,6 +228,18 @@ class TestIsManaRock:
                 "Artifact \u2014 Vehicle",
                 "{T}: Add one mana of any color.\nCrew 3",
             ),
+            (
+                "Talisman of Dominance",
+                "Artifact",
+                "{T}: Add {C}.\n{T}: Add {U} or {B}. This artifact deals 1 damage to you.",
+            ),
+            # Grants a mana ability to lands and has its own
+            (
+                "Chromatic Lantern",
+                "Artifact",
+                'Lands you control have "{T}: Add one mana of any color."\n'
+                "{T}: Add one mana of any color.",
+            ),
         ],
     )
     def test_mana_rocks(self, name: str, type_line: str, oracle_text: str) -> None:
@@ -251,7 +268,30 @@ class TestIsManaRock:
             ),
             # Not an artifact
             ("Smothering Tithe", "Enchantment", "Whenever an opponent draws a card..."),
+            # Sacrifice outlets: the mana ability doesn't tap the artifact
+            ("Ashnod's Altar", "Artifact", "Sacrifice a creature: Add {C}{C}."),
+            ("Phyrexian Altar", "Artifact", "Sacrifice a creature: Add one mana of any color."),
+            # The mana ability is granted to the equipped creature, in quotes
+            (
+                "Paradise Mantle",
+                "Artifact — Equipment",
+                'Equipped creature has "{T}: Add one mana of any color."\nEquip {1}',
+            ),
         ],
     )
     def test_not_mana_rocks(self, name: str, type_line: str, oracle_text: str) -> None:
         assert not is_mana_rock(_card(name, type_line, oracle_text))
+
+
+class TestIsManaRockRequest:
+    """Category and theme names that ask for mana rocks."""
+
+    @pytest.mark.parametrize(
+        "name", ["mana rocks", "Mana Rocks", "mana-rocks", "mana_rocks", "rocks", "mana artifacts"]
+    )
+    def test_requests(self, name: str) -> None:
+        assert is_mana_rock_request(name)
+
+    @pytest.mark.parametrize("name", ["artifacts", "ramp", "mana", "rock lobster"])
+    def test_other_names(self, name: str) -> None:
+        assert not is_mana_rock_request(name)

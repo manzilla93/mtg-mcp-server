@@ -1113,14 +1113,32 @@ class TestColorIdentityStaples:
         assert names == ["Sol Ring"]
         assert mock_bulk.filter_cards.call_args.kwargs["type_contains"] == ["artifact"]
 
-    async def test_mana_artifacts_alias(self, mock_bulk: AsyncMock) -> None:
-        """'mana artifacts' (what a model asked for) means mana rocks too."""
+    @pytest.mark.parametrize("category", ["mana artifacts", "mana-rocks", "Mana_Rocks"])
+    async def test_mana_rock_aliases(self, mock_bulk: AsyncMock, category: str) -> None:
+        """'mana artifacts' (what a model asked for) and spelling variants mean mana rocks."""
         sol_ring = _mock_card(
             "Sol Ring", type_line="Artifact", oracle_text="{T}: Add {C}{C}.", edhrec_rank=1
         )
         mock_bulk.filter_cards = AsyncMock(return_value=[sol_ring])
 
-        result = await color_identity_staples("esper", bulk=mock_bulk, category="mana artifacts")
+        result = await color_identity_staples("esper", bulk=mock_bulk, category=category)
+
+        assert [c["name"] for c in result.data["cards"]] == ["Sol Ring"]
+
+    async def test_mana_rocks_skip_sacrifice_outlets(self, mock_bulk: AsyncMock) -> None:
+        """Ashnod's Altar makes mana by sacrificing creatures; it isn't a mana rock."""
+        sol_ring = _mock_card(
+            "Sol Ring", type_line="Artifact", oracle_text="{T}: Add {C}{C}.", edhrec_rank=1
+        )
+        altar = _mock_card(
+            "Ashnod's Altar",
+            type_line="Artifact",
+            oracle_text="Sacrifice a creature: Add {C}{C}.",
+            edhrec_rank=200,
+        )
+        mock_bulk.filter_cards = AsyncMock(return_value=[altar, sol_ring])
+
+        result = await color_identity_staples("esper", bulk=mock_bulk, category="mana rocks")
 
         assert [c["name"] for c in result.data["cards"]] == ["Sol Ring"]
 

@@ -42,8 +42,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   such as "702.19c".
 - `color_identity_staples` ranks every Commander-legal card in the identity; it
   used to rank only the first matches in bulk-file order, so staples like Sol Ring
-  were missed. New `mana rocks` category (aliases include `mana artifacts`); an
-  unknown category now returns the valid options instead of being ignored.
+  were missed. New `mana rocks` category for artifacts that tap for mana
+  (aliases include `mana artifacts` and `mana-rocks`); sacrifice outlets such as
+  Ashnod's Altar, and mana abilities an artifact grants to something else, don't
+  count. An unknown category now returns the valid options instead of being
+  ignored.
   `filter_cards` accepts `limit=None` to return every match.
 - `theme_search` ranks all matches by EDHREC popularity instead of returning the
   first matches in bulk-file order, and supports a `mana rocks` theme.

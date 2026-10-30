@@ -807,7 +807,11 @@ async def color_identity_staples(
     category: Annotated[
         str | None,
         Field(
-            description="Card type ('creatures', 'instants', 'sorceries', 'enchantments', 'artifacts', 'planeswalkers', 'lands') or 'mana rocks'"
+            description=(
+                "'mana rocks' for artifacts that tap for mana (Sol Ring, Signets, Talismans). "
+                "Otherwise a card type: 'creatures', 'instants', 'sorceries', 'enchantments', "
+                "'artifacts' (every artifact, including equipment), 'planeswalkers', 'lands'"
+            )
         ),
     ] = None,
     limit: Annotated[int, Field(description="Maximum number of results")] = 20,
@@ -819,8 +823,9 @@ async def color_identity_staples(
     """Top cards across ALL commanders in a color identity.
 
     Ranks every Commander-legal card in the identity by EDHREC rank (how many
-    Commander decks play it), from Scryfall bulk data. For roles other than
-    mana rocks (ramp, removal, card draw), use theme_search.
+    Commander decks play it), from Scryfall bulk data. For mana rocks pass
+    category='mana rocks'; 'artifacts' returns every artifact. For other
+    roles (ramp, removal, card draw), use theme_search.
     """
     from mtg_mcp_server.workflows.commander_depth import color_identity_staples as impl
 

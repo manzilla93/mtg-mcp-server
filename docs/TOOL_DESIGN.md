@@ -559,7 +559,7 @@ Top-played cards across all commanders in a color identity.
 
 | Field | Detail |
 |-------|--------|
-| Input | `color_identity: str` (e.g. "simic", "UG"), `category: str | None = None` (a card type such as "creatures", or "mana rocks") |
+| Input | `color_identity: str` (e.g. "simic", "UG"), `category: str | None = None` ("mana rocks" for artifacts that tap for mana, or a card type such as "creatures"; "artifacts" is every artifact) |
 | Output | Markdown with: every Commander-legal card in the identity ranked by EDHREC rank (popularity), with prices. An unknown category returns the valid options. |
 | Backends | Bulk data (required) |
 | Annotations | readOnly=true, idempotent=true, openWorld=true |

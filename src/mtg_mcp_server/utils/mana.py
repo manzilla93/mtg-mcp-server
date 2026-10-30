@@ -8,15 +8,24 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from mtg_mcp_server.types import Card
 
-# A mana ability: "{T}: Add {C}{C}", "{1}, {T}: Add {W}{B}",
-# "{T}, Sacrifice this artifact: Add three mana of any one color".
-_MANA_ABILITY_RE = re.compile(r":\s*add\b", re.IGNORECASE)
+# A mana ability with {T} in its cost: "{T}: Add {C}{C}", "{1}, {T}: Add {W}{B}",
+# "{T}, Sacrifice this artifact: Add three mana of any one color". The cost
+# runs from {T} to the colon on the same line. Requiring {T} leaves out
+# sacrifice outlets such as Ashnod's Altar ("Sacrifice a creature: Add {C}{C}").
+_MANA_ABILITY_RE = re.compile(r"\{T\}[^:\n]*:\s*add\b", re.IGNORECASE)
 
 # What people call mana rocks when they ask for them as a category or theme.
 MANA_ROCK_NAMES = frozenset({"mana rocks", "mana rock", "rocks", "mana artifacts", "mana artifact"})
 
 # Reminder text, e.g. a Treasure's "(It's an artifact with ... Add one mana ...)".
 _REMINDER_TEXT_RE = re.compile(r"\([^)]*\)")
+
+# An ability granted to something else, e.g. Paradise Mantle's
+# 'Equipped creature has "{T}: Add one mana of any color."'
+_QUOTED_TEXT_RE = re.compile(r'"[^"]*"')
+
+# Separators people use in category names: "mana-rocks", "mana_rocks", "mana  rocks".
+_NAME_SEPARATORS_RE = re.compile(r"[\s_-]+")
 
 # Process hybrid BEFORE standard to avoid double-counting letters.
 # E.g. {G/W} should give G:0.5, W:0.5 — not G:1, W:1 from separate matches.
@@ -76,14 +85,25 @@ def suggest_land_count(avg_cmc: float, format_name: str) -> int:
 
 
 def is_mana_rock(card: Card) -> bool:
-    """True for a noncreature, nonland artifact with a mana ability.
+    """True for a noncreature, nonland artifact that taps for mana.
 
     Covers Sol Ring, Signets, Talismans, Arcane Signet and one-shot rocks like
-    Lotus Petal. Reminder text is ignored, so an artifact that only makes
-    Treasure tokens doesn't count.
+    Lotus Petal. Ignored: reminder text (an artifact that only makes Treasure
+    tokens), quoted abilities it grants to other things (Paradise Mantle), and
+    mana abilities without {T} (Ashnod's Altar, a sacrifice outlet).
     """
     types = set(re.findall(r"[a-z]+", card.type_line.lower()))
     if "artifact" not in types or types & {"creature", "land"}:
         return False
     rules_text = _REMINDER_TEXT_RE.sub("", card.oracle_text or "")
+    rules_text = _QUOTED_TEXT_RE.sub("", rules_text)
     return bool(_MANA_ABILITY_RE.search(rules_text))
+
+
+def is_mana_rock_request(name: str) -> bool:
+    """True when a category or theme name asks for mana rocks.
+
+    Case and separators don't matter: "Mana Rocks", "mana-rocks" and
+    "mana_rocks" all count, as do the other names in ``MANA_ROCK_NAMES``.
+    """
+    return _NAME_SEPARATORS_RE.sub(" ", name.lower()).strip() in MANA_ROCK_NAMES

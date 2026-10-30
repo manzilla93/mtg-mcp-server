@@ -15,7 +15,7 @@ import structlog
 
 from mtg_mcp_server.services.base import ServiceError
 from mtg_mcp_server.utils.color_identity import parse_color_identity
-from mtg_mcp_server.utils.mana import MANA_ROCK_NAMES, is_mana_rock
+from mtg_mcp_server.utils.mana import is_mana_rock, is_mana_rock_request
 from mtg_mcp_server.workflows import WorkflowResult
 
 if TYPE_CHECKING:
@@ -281,7 +281,7 @@ async def theme_search(
 
     cards: list[Card] = []
 
-    if theme_lower in MANA_ROCK_NAMES:
+    if is_mana_rock_request(theme_lower):
         # Mana rocks -- a card check, not a text pattern
         artifacts = await bulk.filter_cards(
             type_contains=["artifact"],
