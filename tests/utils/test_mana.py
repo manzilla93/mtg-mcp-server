@@ -240,6 +240,34 @@ class TestIsManaRock:
                 'Lands you control have "{T}: Add one mana of any color."\n'
                 "{T}: Add one mana of any color.",
             ),
+            # The ability says something before it adds the mana (Oracle text, 2026-10-30)
+            (
+                "Nyx Lotus",
+                "Legendary Artifact",
+                "Nyx Lotus enters tapped.\n{T}: Choose a color. Add an amount of mana of that "
+                "color equal to your devotion to that color. (Your devotion to a color is the "
+                "number of mana symbols of that color in the mana costs of permanents you control.)",
+            ),
+            (
+                "Astral Cornucopia",
+                "Artifact",
+                "This artifact enters with X charge counters on it.\n{T}: Choose a color. "
+                "Add one mana of that color for each charge counter on this artifact.",
+            ),
+            (
+                "Charmed Pendant",
+                "Artifact",
+                "{T}, Mill a card: For each colored mana symbol in the milled card's mana cost, "
+                "add one mana of that color. (Activate only as an instant. For example, if the "
+                "card's mana cost is {3}{U}{U}{B}, you add {U}{U}{B}.)",
+            ),
+            (
+                "Empowered Autogenerator",
+                "Artifact",
+                "This artifact enters tapped.\n{T}: Put a charge counter on this artifact. "
+                "Add X mana of any one color, where X is the number of charge counters on "
+                "this artifact.",
+            ),
         ],
     )
     def test_mana_rocks(self, name: str, type_line: str, oracle_text: str) -> None:
@@ -276,6 +304,19 @@ class TestIsManaRock:
                 "Paradise Mantle",
                 "Artifact — Equipment",
                 'Equipped creature has "{T}: Add one mana of any color."\nEquip {1}',
+            ),
+            # A {T} ability that adds something other than mana (a made-up card)
+            (
+                "Ante Amulet",
+                "Artifact",
+                "{T}, Sacrifice this artifact: Target opponent may add the top card of their "
+                "library to the ante.",
+            ),
+            # {T} in one ability, "add" in another (a made-up card)
+            (
+                "Two Abilities",
+                "Artifact",
+                "{T}: Untap target land.\nSacrifice a creature: Add {C}.",
             ),
         ],
     )

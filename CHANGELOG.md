@@ -45,8 +45,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   were missed. New `mana rocks` category for artifacts that tap for mana
   (aliases include `mana artifacts` and `mana-rocks`); sacrifice outlets such as
   Ashnod's Altar, and mana abilities an artifact grants to something else, don't
-  count. An unknown category now returns the valid options instead of being
-  ignored.
+  count; rocks whose tap ability says something before adding the mana (Nyx
+  Lotus, Astral Cornucopia: "{T}: Choose a color. Add ...") do. An unknown
+  category now returns the valid options instead of being ignored.
   `filter_cards` accepts `limit=None` to return every match.
 - `theme_search` ranks all matches by EDHREC popularity instead of returning the
   first matches in bulk-file order, and supports a `mana rocks` theme.

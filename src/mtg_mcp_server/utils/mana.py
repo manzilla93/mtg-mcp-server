@@ -12,7 +12,18 @@ if TYPE_CHECKING:
 # "{T}, Sacrifice this artifact: Add three mana of any one color". The cost
 # runs from {T} to the colon on the same line. Requiring {T} leaves out
 # sacrifice outlets such as Ashnod's Altar ("Sacrifice a creature: Add {C}{C}").
-_MANA_ABILITY_RE = re.compile(r"\{T\}[^:\n]*:\s*add\b", re.IGNORECASE)
+# The effect may say something first, as long as the same ability (one line)
+# adds mana: Nyx Lotus's "{T}: Choose a color. Add an amount of mana of that
+# color ...". The sentence with "add" must name mana or a mana symbol, so an
+# ability that adds anything else doesn't count.
+_MANA_ABILITY_RE = re.compile(
+    r"""
+    \{T\}[^:\n]*:            # a cost with {T} in it, up to its colon
+    [^\n]*?\badd\b           # "add" later in the same ability
+    [^.\n]*(?:\bmana\b|\{)   # ... adding mana: "mana" or a symbol before the sentence ends
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
 
 # What people call mana rocks when they ask for them as a category or theme.
 MANA_ROCK_NAMES = frozenset({"mana rocks", "mana rock", "rocks", "mana artifacts", "mana artifact"})
@@ -87,8 +98,9 @@ def suggest_land_count(avg_cmc: float, format_name: str) -> int:
 def is_mana_rock(card: Card) -> bool:
     """True for a noncreature, nonland artifact that taps for mana.
 
-    Covers Sol Ring, Signets, Talismans, Arcane Signet and one-shot rocks like
-    Lotus Petal. Ignored: reminder text (an artifact that only makes Treasure
+    Covers Sol Ring, Signets, Talismans, Arcane Signet, one-shot rocks like
+    Lotus Petal, and abilities that say something before adding the mana
+    (Nyx Lotus: "{T}: Choose a color. Add ..."). Ignored: reminder text (an artifact that only makes Treasure
     tokens), quoted abilities it grants to other things (Paradise Mantle), and
     mana abilities without {T} (Ashnod's Altar, a sacrifice outlet).
     """
