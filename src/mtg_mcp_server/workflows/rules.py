@@ -31,6 +31,11 @@ log = structlog.get_logger(service="workflow.rules")
 # Pattern to detect rule numbers: digits and dots, optional trailing letter(s)
 _RULE_NUMBER_RE = re.compile(r"^\d+(\.\d+[a-z]*)*$")
 
+# End of a sentence: a period followed by whitespace or the end of the text.
+# The period in a rule reference like "rule 702.19c" is not followed by
+# whitespace, so it doesn't end the sentence.
+_SENTENCE_END_RE = re.compile(r"\.(?=\s|$)")
+
 # Minimum word length to try as a keyword when extracting from scenario text
 _MIN_KEYWORD_LEN = 4
 
@@ -184,8 +189,9 @@ _KEYWORD_INTERACTIONS: dict[str, list[tuple[str, str]]] = {
 
 def _fmt_rule_concise(rule: Rule) -> str:
     """Format a rule for concise output: number + first sentence."""
-    first_line = rule.text.split(".")[0] + "." if "." in rule.text else rule.text
-    return f"**{rule.number}** {first_line}"
+    end = _SENTENCE_END_RE.search(rule.text)
+    first_sentence = rule.text[: end.end()] if end else rule.text
+    return f"**{rule.number}** {first_sentence}"
 
 
 def _fmt_rule_detailed(rule: Rule) -> str:
@@ -237,11 +243,16 @@ async def rules_lookup(
     "Trample"; the rules themselves are 702.19a-g). Otherwise searches via
     ``rules.keyword_search()``.
 
+    A rule-number lookup always shows full text, whatever *response_format*
+    says: cut to its first sentence, 702.19b no longer says that excess
+    damage goes to the player.
+
     Args:
         query: A rule number (e.g. "704.5k") or keyword (e.g. "deathtouch").
         rules: Initialized RulesService.
         section: Optional section prefix to filter results.
-        response_format: ``"detailed"`` (default) or ``"concise"``.
+        response_format: ``"detailed"`` (default) or ``"concise"``, which
+            shortens each keyword-search match to its first sentence.
 
     Returns:
         WorkflowResult with formatted markdown and structured data.
@@ -280,21 +291,23 @@ async def rules_lookup(
         if section:
             lines.append(f"(filtered to section {section})")
     elif is_number_lookup:
-        # A single rule: show where it sits in the rules and everything under it
+        # A single rule: show where it sits in the rules and everything under
+        # it, in full (see docstring).
         rule = found_rules[0]
         context = list(await rules.rule_context(rule.number))
         lines.append(f"# Rule {rule.number}")
         lines.append("")
         if context:
-            lines.append("*" + " > ".join(f"{num} {title}" for num, title in context) + "*")
+            # Numbered as in the rules document: "7. Additional Rules > 702. Keyword Abilities"
+            lines.append("*" + " > ".join(f"{num}. {title}" for num, title in context) + "*")
             lines.append("")
-        lines.append(fmt(rule))
+        lines.append(_fmt_rule_detailed(rule))
         if rule.subrules:
             lines.append("")
             lines.append(f"Subrules ({len(rule.subrules)}):")
             lines.append("")
             for subrule in rule.subrules:
-                lines.append(f"- {fmt(subrule)}")
+                lines.append(f"- {_fmt_rule_detailed(subrule)}")
     else:
         lines.append(f"# Rules: {query}")
         lines.append("")

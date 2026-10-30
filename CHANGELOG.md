@@ -35,6 +35,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its subrules; looking up `702.19` used to return only the title "Trample".
   Section headings in the rules body are no longer appended to the text of the
   rule before them.
+- `rules_lookup` shows a looked-up rule and its subrules in full in `concise`
+  mode too. Concise output cut every rule to its first sentence, which dropped
+  the part of 702.19b that sends excess damage to the player. In all rules tools,
+  a concise first sentence no longer ends at the period inside a rule reference
+  such as "702.19c".
 - `color_identity_staples` ranks every Commander-legal card in the identity; it
   used to rank only the first matches in bulk-file order, so staples like Sol Ring
   were missed. New `mana rocks` category (aliases include `mana artifacts`); an

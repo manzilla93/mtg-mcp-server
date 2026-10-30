@@ -1640,14 +1640,19 @@ async def rules_lookup(
     ] = None,
     response_format: Annotated[
         Literal["detailed", "concise"],
-        Field(description="Output verbosity: 'detailed' (default) or 'concise'"),
+        Field(
+            description=(
+                "Output verbosity for keyword searches: 'detailed' (default) or 'concise' "
+                "(first sentence of each match). A rule number is always shown in full."
+            )
+        ),
     ] = "detailed",
 ) -> ToolResult:
     """Look up MTG Comprehensive Rules by number or keyword search.
 
     A rule number returns that rule's full text, the headings above it, and
-    all of its subrules (e.g. '702.19' returns Trample with 702.19a-g). A
-    keyword returns up to 20 matching rules.
+    all of its subrules in full (e.g. '702.19' returns Trample with
+    702.19a-g). A keyword returns up to 20 matching rules.
     """
     from mtg_mcp_server.workflows.rules import rules_lookup as impl
 

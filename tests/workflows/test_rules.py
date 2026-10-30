@@ -242,7 +242,7 @@ class TestRulesLookup:
         assert "**702.19** Trample" in result.markdown
         assert "702.19a" in result.markdown
         assert "702.19b" in result.markdown
-        assert "702 Keyword Abilities" in result.markdown
+        assert "*7. Additional Rules > 702. Keyword Abilities*" in result.markdown
         assert [s["number"] for s in result.data["subrules"]] == ["702.19a", "702.19b"]
         assert result.data["context"][-1] == {"number": "702", "title": "Keyword Abilities"}
         rules.rule_context.assert_awaited_once_with("702.19")
@@ -262,9 +262,48 @@ class TestRulesLookup:
 
         result = await rules_lookup("702.19b", rules=rules)
 
-        assert "702.19 Trample" in result.markdown
+        assert "702. Keyword Abilities > 702.19. Trample" in result.markdown
         assert "Subrules" not in result.markdown
         assert result.data["subrules"] == []
+        # Structured data keeps the plain numbers
+        assert result.data["context"][-1] == {"number": "702.19", "title": "Trample"}
+
+    @pytest.mark.anyio
+    async def test_rule_number_is_full_text_when_concise(self) -> None:
+        """Concise mode must not cut a looked-up rule or its subrules to one sentence."""
+        rules = _make_rules()
+        rules.lookup_by_number.return_value = Rule(
+            number="702.19",
+            text="Trample",
+            subrules=[
+                Rule(
+                    number="702.19b",
+                    text=(
+                        "The controller of an attacking creature with trample first assigns "
+                        "damage to the creature(s) blocking it. Once all those blocking "
+                        "creatures are assigned lethal damage, any excess damage is assigned "
+                        "as its controller chooses among those blocking creatures and the player."
+                    ),
+                ),
+            ],
+        )
+
+        result = await rules_lookup("702.19", rules=rules, response_format="concise")
+
+        assert "any excess damage is assigned" in result.markdown
+
+    @pytest.mark.anyio
+    async def test_concise_keeps_rule_references_whole(self) -> None:
+        """A rule reference like '702.19c' doesn't end a concise first sentence."""
+        rules = _make_rules()
+        rules.keyword_search.return_value = [
+            Rule(number="702.19d", text="See rule 702.19c for the rest. This part is cut."),
+        ]
+
+        result = await rules_lookup("trample", rules=rules, response_format="concise")
+
+        assert "**702.19d** See rule 702.19c for the rest." in result.markdown
+        assert "This part is cut" not in result.markdown
 
     @pytest.mark.anyio
     async def test_keyword_search_skips_context(self) -> None:

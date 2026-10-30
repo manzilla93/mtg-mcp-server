@@ -723,8 +723,8 @@ Look up rules by number or keyword search.
 
 | Field | Detail |
 |-------|--------|
-| Input | `query: str` (rule number like "704.5k" or keyword like "deathtouch"), `section: str | None = None` |
-| Output | Markdown with: matching rules with full text; for a rule number, the headings above it (e.g. 7 Additional Rules > 702 Keyword Abilities) and all of its subrules |
+| Input | `query: str` (rule number like "704.5k" or keyword like "deathtouch"), `section: str | None = None`, `response_format: "detailed" \| "concise" = "detailed"` |
+| Output | Markdown with: matching rules with full text; for a rule number, the headings above it (e.g. 7. Additional Rules > 702. Keyword Abilities) and all of its subrules, always in full. `concise` shortens keyword-search matches to their first sentence. |
 | Backends | RulesService (local) |
 | Annotations | readOnly=true, idempotent=true, openWorld=true |
 
